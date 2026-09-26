@@ -13,7 +13,7 @@ from typing import override
 
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent
+from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
     QLayout,
     QMainWindow,
     QPushButton,
+    QPlainTextEdit,
     QScrollArea,
+    QSplitter,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -299,6 +301,10 @@ class MiddleBarWidget(QWidget):
         if isinstance(widget, QComboBox):
             return widget.currentText()
         raise TypeError(f"Unsupported option widget for {name!r}: {type(widget).__name__}")
+
+    def snapshot(self) -> dict[str, bool | int | str]:
+        """Copy current option values so conversion workers never read Qt widgets."""
+        return {name: self.value(name) for name in self.options}
 
     def rebuild(self, fmt: str, deps: dict[str, bool]) -> None:
         """Tear down and rebuild the row for `fmt` (already lowercased, e.g.
@@ -598,4 +604,21 @@ class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.image_grid)
 
-        root_layout.addWidget(scroll_area)
+        self.log_output: QPlainTextEdit = QPlainTextEdit()  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.log_output.setReadOnly(True)
+        self.log_output.setMaximumBlockCount(1000)
+        log_font = QFont("monospace")
+        log_font.setStyleHint(QFont.StyleHint.Monospace)
+        self.log_output.setFont(log_font)
+        self.log_output.setMinimumHeight(80)
+
+        self.content_splitter: QSplitter = QSplitter(Qt.Orientation.Vertical)  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.setHandleWidth(6)
+        self.content_splitter.addWidget(scroll_area)
+        self.content_splitter.addWidget(self.log_output)
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.setStretchFactor(1, 0)
+        self.content_splitter.setSizes([400, 120])
+
+        root_layout.addWidget(self.content_splitter, 1)

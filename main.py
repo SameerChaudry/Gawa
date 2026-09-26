@@ -8,6 +8,8 @@ import sys
 from typing import Any
 from PIL import Image
 from pathlib import Path
+from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
 import statistics
@@ -19,11 +21,55 @@ deps = {
     "ffmpeg":   shutil.which("ffmpeg") is not None
 }
 
+# Runs the conversion loop in a separate thread to avoid locking up the main thread
+class ConversionWorker(QThread):
+    log_message = Signal(str)
+
+    def __init__(self, image_paths: list[Path], des_format: str, quality: int, options: dict[str, bool | int | str],
+        output_dir: Path, parent: QObject | None = None) -> None:
+
+        super().__init__(parent)
+        self.image_paths = image_paths
+        self.des_format = des_format
+        self.quality = quality
+        self.options = options
+        self.output_dir = output_dir
+        self.failures: list[str] = []
+
+    def run(self) -> None:
+        output_extension = "png" if self.des_format == "apng" else self.des_format
+        reserved_outputs: set[Path] = set()
+
+        for index, image_path in enumerate(self.image_paths, start=1):
+            if self.isInterruptionRequested():
+                self.log_message.emit("Conversion cancelled.")
+                break
+
+            output_path = MainWindow.unique_output_path(
+                self.output_dir, image_path.stem, output_extension, reserved_outputs)
+            self.log_message.emit(f"[{index}/{len(self.image_paths)}] Extracting {image_path.name}")
+            try:
+                delays = MainWindow.dump_frames(image_path)
+                self.log_message.emit(f"Converting {image_path.name}")
+                MainWindow.assemble_frames(
+                    self.des_format, self.quality, delays, output_path, self.options)
+                self.log_message.emit(f"Saved {output_path}")
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                failure = f"{image_path.name}: {error}"
+                self.failures.append(failure)
+                self.log_message.emit(f"Failed {failure}")
+            finally:
+                shutil.rmtree(Path("gawa_frames"), ignore_errors=True)
+
+        if not self.failures and not self.isInterruptionRequested():
+            self.log_message.emit("Conversion complete.")
+
 class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
         self.output_dir: Path | None = None
+        self.worker: ConversionWorker | None = None
 
         # underscore assignment just tells basedpyright that the returned connection object is useless
         _ = self.remove_button.clicked.connect(self.on_remove_clicked)
@@ -58,25 +104,29 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def on_format_changed(self, format_name: str) -> None:
         self.middle_bar.rebuild(format_name.lower(), deps)
 
-    def get_fps(self, delays: list[int]) -> int:
+    # Calculates an fps value using a list of delays or a custom delay value
+    @staticmethod
+    def get_fps(delays: list[int], options: dict[str, bool | int | str]) -> int:
         valid_delays = [delay for delay in delays if delay > 0]
         if not valid_delays:
             valid_delays = [100]
 
-        delay_mode = self.middle_bar.value("delay_mode")
+        delay_mode = options["delay_mode"]
 
         if delay_mode == "Average":
             delay_ms = sum(valid_delays) / len(valid_delays)
         elif delay_mode == "Mode":
             delay_ms = statistics.mode(valid_delays)
         elif delay_mode == "Custom":
-            delay_ms = self.middle_bar.value("delay_ms")
+            delay_ms = options["delay_ms"]
         else:
             raise ValueError(f"Unknown delay mode: {delay_mode}")
 
         return max(1, round(1000 / max(1, int(delay_ms))))
 
-    def dump_frames(self, image_path: Path) -> list[int]:
+    # Extracts frames as pngs
+    @staticmethod
+    def dump_frames(image_path: Path) -> list[int]:
         frame_dir = Path("gawa_frames")
         if frame_dir.exists(): shutil.rmtree(frame_dir)
         frame_dir.mkdir()
@@ -92,25 +142,27 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         return delays_ms
 
-    def assemble_frames(self, des_format, quality, delays, out_path: Path) -> None:
+    # Encodes animations using a directory of frames and list of delays
+    @staticmethod
+    def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path,
+    options: dict[str, bool | int | str]) -> None:
         frame_dir = Path("gawa_frames")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
 
         if(des_format == "gif"):
-            if(deps["gifski"] and self.middle_bar.value("use_gifski")):
-                fps = self.get_fps(delays)
-                frame_paths = [str(frame_dir / f"frame_{i:04d}.png") for i in range(len(delays))]
+            if(deps["gifski"] and options["use_gifski"]):
+                fps = MainWindow.get_fps(delays, options)
                 cmd = ["gifski", "--quality", str(quality), "--fps", str(fps), "-o", str(out_path)] + frames
                 subprocess.run(cmd, check=True)
 
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, 
-                disposal=2, include_color_table=self.middle_bar.value("local_color_table"))
+                disposal=2, include_color_table=options["local_color_table"])
 
         if(des_format == "apng"):
-            if(deps["apngasm"] and self.middle_bar.value("use_apngasm")):
+            if(deps["apngasm"] and options["use_apngasm"]):
                 cmd = ["apngasm", "-o", str(out_path)]
                 
                 for frame_path, delay in zip(frames, delays):
@@ -121,23 +173,20 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                disposal=1, compress_level=self.middle_bar.value("speed"))
+                disposal=1, compress_level=options["speed"])
 
         if(des_format == "webp"):
-            if(deps["img2webp"] and self.middle_bar.value("use_img2webp")):
+            if(deps["img2webp"] and options["use_img2webp"]):
                 cmd = ["img2webp", "-loop", "0"]
-                speed = self.middle_bar.value("speed")
-                mixed = self.middle_bar.value("use_mixed")
+                speed = options["speed"]
+                mixed = options["use_mixed"]
 
-                if mixed:
-                    cmd += ["-mixed", "-q", str(quality)]
+                if mixed: cmd += ["-mixed", "-q", str(quality)]
                 elif quality == 100: cmd += ["-lossless"]
                 else: cmd += ["-lossy", "-q", str(quality)]
 
-                # img2webp's method range matches the speed control (0..6).
                 cmd += ["-m", str(speed)]
-                if self.middle_bar.value("sharp") and (quality < 100 or mixed):
-                    cmd += ["-sharp_yuv"]
+                if options["sharp"] and (quality < 100 or mixed): cmd += ["-sharp_yuv"]
                 
                 for i, frame_path in enumerate(frames): cmd += ["-d", str(delays[i]), str(frame_path)]
                 cmd += ["-o", str(out_path)]
@@ -147,16 +196,16 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 imgs = [Image.open(f) for f in frames]
                 webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                method=self.middle_bar.value("speed"), **webp_quality_options)
+                method=options["speed"], **webp_quality_options)
 
         if(des_format == "avif"):
-            speed = self.middle_bar.value("speed")
-            subsampling = str(self.middle_bar.value("subsampling"))
+            speed = options["speed"]
+            subsampling = str(options["subsampling"])
 
-            if(deps["ffmpeg"] and self.middle_bar.value("use_ffmpeg")):
-                fps = self.get_fps(delays)
+            if(deps["ffmpeg"] and options["use_ffmpeg"]):
+                fps = MainWindow.get_fps(delays, options)
                 pixel_format = subsampling
-                crf = str(self.middle_bar.value("crf"))
+                crf = str(options["crf"])
                 input_pattern = str(frame_dir / "frame_%04d.png")
 
                 subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf", "scale=in_range=full:out_range=full",
@@ -171,15 +220,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         shutil.rmtree(frame_dir)
 
-    def unique_output_path(self, stem: str, extension: str, reserved: set[Path]) -> Path:
-        """Choose a non-overwriting output name, suffixing duplicates as -1, -2, ..."""
-        if self.output_dir is None:
-            raise RuntimeError("Output directory has not been selected")
-
-        candidate = self.output_dir / f"{stem}.{extension}"
+    # Use a unique filename suffix to avoid rewriting output files
+    @staticmethod
+    def unique_output_path(output_dir: Path, stem: str, extension: str, reserved: set[Path]) -> Path:
+        candidate = output_dir / f"{stem}.{extension}"
         suffix = 1
         while candidate.exists() or candidate in reserved:
-            candidate = self.output_dir / f"{stem}-{suffix}.{extension}"
+            candidate = output_dir / f"{stem}-{suffix}.{extension}"
             suffix += 1
 
         reserved.add(candidate)
@@ -187,36 +234,38 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def on_make_convert_clicked(self) -> None:
         image_paths = self.image_grid.get_file_paths()
-        if not image_paths:
-            return
+        if not image_paths: return
 
         if self.output_dir is None:
             self.on_choose_output_folder_clicked()
-            if self.output_dir is None:
-                return
+            if self.output_dir is None: return
 
         des_format = self.format_dropdown.currentText().lower()
         quality = self.quality_spinbox.value()
-        output_extension = "png" if des_format == "apng" else des_format
-        reserved_outputs: set[Path] = set()
-        failures: list[str] = []
+        options = self.middle_bar.snapshot()
+        self.make_convert_button.setEnabled(False)
 
-        for image_path in image_paths:
-            output_path = self.unique_output_path(image_path.stem, output_extension, reserved_outputs)
-            try:
-                delays = self.dump_frames(image_path)
-                self.assemble_frames(des_format, quality, delays, output_path)
-            except (OSError, ValueError, subprocess.SubprocessError) as error:
-                failures.append(f"{image_path.name}: {error}")
-            finally:
-                shutil.rmtree(Path("gawa_frames"), ignore_errors=True)
+        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, self)
+        _ = self.worker.log_message.connect(self.log_output.appendPlainText)
+        _ = self.worker.finished.connect(self.on_conversion_finished)
+        self.worker.start()
 
+    def on_conversion_finished(self) -> None:
+        worker = self.worker
+        failures = worker.failures if worker is not None else []
+        self.make_convert_button.setEnabled(True)
+        self.worker = None
+        if worker is not None:
+            worker.deleteLater()
         if failures:
-            QMessageBox.warning(
-                self,
-                "Some conversions failed",
-                "The following files could not be converted:\n\n" + "\n".join(failures),
-            )
+            QMessageBox.warning(self, "Some conversions failed",
+                "The following files could not be converted:\n\n" + "\n".join(failures),)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.requestInterruption()
+            self.worker.wait()
+        super().closeEvent(event)
 
 def main() -> None:
     app = QApplication(sys.argv)
