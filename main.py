@@ -18,7 +18,7 @@ deps = {
     "gifski":   shutil.which("gifski") is not None,
     "apngasm":  shutil.which("apngasm") is not None,
     "img2webp": shutil.which("img2webp") is not None,
-    "ffmpeg":   shutil.which("ffmpeg") is not None
+    "ffmpeg":   shutil.which("ffmpeg") is not None,
 }
 
 # Runs the conversion loop in a separate thread to avoid locking up the main thread
@@ -130,16 +130,36 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         frame_dir = Path("gawa_frames")
         if frame_dir.exists(): shutil.rmtree(frame_dir)
         frame_dir.mkdir()
-        delays_ms = []
-
         with Image.open(image_path) as img:
-            frame_count = getattr(img, "n_frames", 1)
-            for frame_index in range(frame_count):
+            expected_frames = getattr(img, "n_frames", 1)
+            delays_ms = []
+            for frame_index in range(expected_frames):
                 img.seek(frame_index)
-                frame = img.convert("RGBA")
-                frame.save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
-                delays_ms.append(int(img.info.get("duration", 0) or 0))
+                img.load()
+                delays_ms.append(int(img.info.get("duration", 100) or 100))
 
+        # FFmpeg 9 seemed to only write a single frame for every tested avif for some reason 
+        if deps["ffmpeg"] and image_path.suffix.lower() != ".avif":
+            try:
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-fps_mode", "passthrough", 
+                    str(frame_dir / "frame_%04d.png")], check=True, capture_output=True)
+                extracted = sorted(frame_dir.glob("frame_*.png"))
+                if len(extracted) == expected_frames:
+                    for index, frame in enumerate(extracted):
+                        frame.rename(frame_dir / f"frame_{index:04d}.png")
+                    return delays_ms
+
+            except (OSError, subprocess.SubprocessError): pass
+
+        # Pillow fallback for when ffmpeg can't decode webp or has some other issue
+        shutil.rmtree(frame_dir)
+        frame_dir.mkdir()
+        delays_ms = []
+        with Image.open(image_path) as img:
+            for frame_index in range(getattr(img, "n_frames", 1)):
+                img.seek(frame_index)
+                img.convert("RGBA").save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
+                delays_ms.append(int(img.info.get("duration", 100) or 100))
         return delays_ms
 
     # Encodes animations using a directory of frames and list of delays
