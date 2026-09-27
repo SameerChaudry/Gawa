@@ -581,10 +581,11 @@ class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming
         top_bar.addWidget(self.quality_spinbox)
         top_bar.addWidget(self.speed_label)
         top_bar.addWidget(self.speed_spinbox)
-        top_bar.addSpacing(20)
+        top_bar.addSpacing(10)
+        top_bar.addStretch()
         top_bar.addWidget(save_to_label)
         top_bar.addWidget(self.output_folder_button)
-        top_bar.addStretch()
+        top_bar.addSpacing(5)
 
         self.make_convert_button: QPushButton = QPushButton("Convert")  # pyright: ignore[reportUninitializedInstanceVariable]
         top_bar.addWidget(self.make_convert_button)
