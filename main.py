@@ -39,6 +39,7 @@ class ConversionWorker(QThread):
     def run(self) -> None:
         output_extension = "png" if self.des_format == "apng" else self.des_format
         reserved_outputs: set[Path] = set()
+        frame_dir = Path("gawa_frames")
 
         for index, image_path in enumerate(self.image_paths, start=1):
             if self.isInterruptionRequested():
@@ -48,18 +49,22 @@ class ConversionWorker(QThread):
             output_path = MainWindow.unique_output_path(
                 self.output_dir, image_path.stem, output_extension, reserved_outputs)
             self.log_message.emit(f"[{index}/{len(self.image_paths)}] Extracting {image_path.name}")
+
             try:
-                delays = MainWindow.dump_frames(image_path)
+                delays, extracter = MainWindow.dump_frames(image_path, frame_dir)
+                self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
                 self.log_message.emit(f"Converting {image_path.name}")
-                MainWindow.assemble_frames(
+                encoder = MainWindow.assemble_frames(
                     self.des_format, self.quality, delays, output_path, self.options)
-                self.log_message.emit(f"Saved {output_path}")
+                self.log_message.emit(f"Saved to {output_path} using {encoder}")
+
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 failure = f"{image_path.name}: {error}"
                 self.failures.append(failure)
                 self.log_message.emit(f"Failed {failure}")
+                
             finally:
-                shutil.rmtree(Path("gawa_frames"), ignore_errors=True)
+                shutil.rmtree(frame_dir, ignore_errors=True)
 
         if not self.failures and not self.isInterruptionRequested():
             self.log_message.emit("Conversion complete.")
@@ -126,8 +131,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     # Extracts frames as pngs
     @staticmethod
-    def dump_frames(image_path: Path) -> list[int]:
-        frame_dir = Path("gawa_frames")
+    def dump_frames(image_path: Path, frame_dir: Path) -> tuple[list[int], str]:
         if frame_dir.exists(): shutil.rmtree(frame_dir)
         frame_dir.mkdir()
         with Image.open(image_path) as img:
@@ -147,7 +151,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 if len(extracted) == expected_frames:
                     for index, frame in enumerate(extracted):
                         frame.rename(frame_dir / f"frame_{index:04d}.png")
-                    return delays_ms
+                    return delays_ms, "ffmpeg"
 
             except (OSError, subprocess.SubprocessError): pass
 
@@ -160,12 +164,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 img.seek(frame_index)
                 img.convert("RGBA").save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
                 delays_ms.append(int(img.info.get("duration", 100) or 100))
-        return delays_ms
+        return delays_ms, "pillow"
 
     # Encodes animations using a directory of frames and list of delays
     @staticmethod
     def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path,
-    options: dict[str, bool | int | str]) -> None:
+    options: dict[str, bool | int | str]) -> str:
         frame_dir = Path("gawa_frames")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
@@ -175,11 +179,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 fps = MainWindow.get_fps(delays, options)
                 cmd = ["gifski", "--quality", str(quality), "--fps", str(fps), "-o", str(out_path)] + frames
                 subprocess.run(cmd, check=True)
+                return "gifski"
 
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, 
                 disposal=2, include_color_table=options["local_color_table"])
+                return "pillow"
 
         if(des_format == "apng"):
             if(deps["apngasm"] and options["use_apngasm"]):
@@ -189,11 +195,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     cmd += [str(frame_path), str(delay)]
                 cmd += ["-F"]
                 subprocess.run(cmd, check=True)
+                return "apngasm"
 
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
                 disposal=1, compress_level=options["speed"])
+                return "pillow"
 
         if(des_format == "webp"):
             if(deps["img2webp"] and options["use_img2webp"]):
@@ -211,13 +219,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 for i, frame_path in enumerate(frames): cmd += ["-d", str(delays[i]), str(frame_path)]
                 cmd += ["-o", str(out_path)]
                 subprocess.run(cmd, check=True)
+                return "img2webp"
 
             else:
                 imgs = [Image.open(f) for f in frames]
                 webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
                 method=options["speed"], **webp_quality_options)
-
+                return "pillow"
+            
         if(des_format == "avif"):
             speed = options["speed"]
             subsampling = str(options["subsampling"])
@@ -231,14 +241,17 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf", "scale=in_range=full:out_range=full",
                 "-c:v", "libsvtav1", "-preset", str(speed), "-crf", crf, "-pix_fmt", pixel_format, "-color_range", "2",
                 "-f", "avif", "-loop", "0", str(out_path)], check=True)
+                return "ffmpeg"
 
             else:
                 imgs = [Image.open(f) for f in frames]
                 avif_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
                 method=speed, subsampling=subsampling, **avif_quality_options)
-
-        shutil.rmtree(frame_dir)
+                return "pillow"
+        
+        else:
+            raise ValueError(f"Invalid output format: {des_format}")
 
     # Use a unique filename suffix to avoid rewriting output files
     @staticmethod
