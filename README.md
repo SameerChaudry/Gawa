@@ -7,9 +7,7 @@ I am unfamiliar with pyside6 so qt_ui.py is written by Claude
 Pyside6 and Pillow are required dependencies, while gifski, apngasm, img2webp, and ffmpeg are optional dependencies
 
 Roadmap:
-- Displaying encoding methods comparisons in-app for easier informed decisions
-- Including an in-app log for info about progress, errors, commands used, etc
+- Video to animated image converter
+- Bit of extra polish/bug fixes/error handling
 - Releasing compiled executables for linux and windows after finishing basic features
 - Submitting to the AUR
-
-- Video to animated image converter

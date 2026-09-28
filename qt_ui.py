@@ -127,7 +127,7 @@ class ThumbnailWidget(QWidget):
             self._image_label.setStyleSheet("border: 1px solid palette(mid);")
 
     @override
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
@@ -223,12 +223,12 @@ class ResizingScrollArea(QScrollArea):
         self.viewport().installEventFilter(self)
 
     @override
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._reflow_grid()
 
     @override
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.viewport() and event.type() == QEvent.Type.Resize:
             self._reflow_grid()
         return super().eventFilter(watched, event)
@@ -263,8 +263,14 @@ class MiddleBarWidget(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._layout: QHBoxLayout = QHBoxLayout(self)
+        self._row_layout: QHBoxLayout = QHBoxLayout(self)
+        self._row_layout.setContentsMargins(0, 0, 0, 0)
+        self._layout: QHBoxLayout = QHBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
+        self._row_layout.addLayout(self._layout)
+        self._row_layout.addStretch()
+        self.benchmarks_button: QPushButton = QPushButton("Benchmarks")
+        self._row_layout.addWidget(self.benchmarks_button)
         self._quality_spinbox: QSpinBox = quality_spinbox
         self._speed_label: QLabel = speed_label
         self._speed_spinbox: QSpinBox = speed_spinbox
@@ -416,7 +422,7 @@ class MiddleBarWidget(QWidget):
     def _build_webp(self, deps: dict[str, bool]) -> None:
         use_img2webp = QCheckBox("Use img2webp")
         use_mixed = QCheckBox("Use mixed mode")
-        sharp = QCheckBox("Use sharp YUV conversion")
+        sharp = QCheckBox("Use sharp RGB -> YUV conversion")
 
         use_img2webp.setEnabled(deps["img2webp"])
         use_img2webp.setToolTip(
@@ -481,7 +487,7 @@ class MiddleBarWidget(QWidget):
         self.options["delay_mode"] = delay_mode
         self.options["delay_ms"] = delay_ms
 
-        self._enable_speed(0, 10, 8, "Pillow speed: Higher values are faster")
+        self._enable_speed(0, 10, 7, "Pillow speed: Higher values are faster")
         ffmpeg_available = deps["ffmpeg"]
         use_ffmpeg.setEnabled(ffmpeg_available)
         use_ffmpeg.setToolTip(
@@ -528,7 +534,7 @@ class MiddleBarWidget(QWidget):
         update_constraints()
 
 
-class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming)
+class Ui_MainWindow:
     """Builds and arranges every widget onto `self`. Call as `self.setupUi(self)`
     from a class that inherits both QMainWindow and Ui_MainWindow -- see main.py.
     No signals are connected here; that's main.py's job.
@@ -539,7 +545,7 @@ class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming
     # unsafe. setupUi() is this class's real initializer instead, so each
     # attribute is annotated where it's assigned, with an inline ignore.
 
-    def setupUi(self, MainWindow: QMainWindow) -> None:  # noqa: N802, N803 (matches pyside6-uic convention)
+    def setupUi(self, MainWindow: QMainWindow) -> None:
         MainWindow.setWindowTitle("Gawa")
         MainWindow.resize(700, 500)
 
@@ -561,13 +567,13 @@ class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming
         quality_label = QLabel("Quality:")
         self.quality_spinbox: QSpinBox = QSpinBox()  # pyright: ignore[reportUninitializedInstanceVariable]
         self.quality_spinbox.setRange(1, 100)
-        self.quality_spinbox.setValue(90)
+        self.quality_spinbox.setValue(80)
         self.quality_spinbox.setToolTip("100 uses lossless encoding, 1-99 is lossy")
 
         self.speed_label: QLabel = QLabel("Speed:")  # pyright: ignore[reportUninitializedInstanceVariable]
         self.speed_spinbox: QSpinBox = QSpinBox()  # pyright: ignore[reportUninitializedInstanceVariable]
         self.speed_spinbox.setRange(0, 13)
-        self.speed_spinbox.setValue(8)
+        self.speed_spinbox.setValue(7)
 
         save_to_label = QLabel("Save to:")
         self.output_folder_button: QPushButton = QPushButton("Choose folder...")  # pyright: ignore[reportUninitializedInstanceVariable]
@@ -608,7 +614,7 @@ class Ui_MainWindow:  # noqa: N801 (matches pyside6-uic's generated class naming
         self.log_output: QPlainTextEdit = QPlainTextEdit()  # pyright: ignore[reportUninitializedInstanceVariable]
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumBlockCount(1000)
-        log_font = QFont("monospace")
+        log_font = QFont("monospace", -1)
         log_font.setStyleHint(QFont.StyleHint.Monospace)
         self.log_output.setFont(log_font)
         self.log_output.setMinimumHeight(80)

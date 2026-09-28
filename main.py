@@ -70,6 +70,8 @@ class ConversionWorker(QThread):
             self.log_message.emit("Conversion complete.")
 
 class MainWindow(QMainWindow, Ui_MainWindow):
+    log_message = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
@@ -77,12 +79,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.worker: ConversionWorker | None = None
 
         # underscore assignment just tells basedpyright that the returned connection object is useless
+        _ = self.log_message.connect(self.log_output.appendPlainText)
         _ = self.remove_button.clicked.connect(self.on_remove_clicked)
         _ = self.add_files_button.clicked.connect(self.on_add_files_clicked)
         _ = self.remove_all_button.clicked.connect(self.on_remove_all_clicked)
-        _ = self.output_folder_button.clicked.connect(self.on_choose_output_folder_clicked)
         _ = self.make_convert_button.clicked.connect(self.on_make_convert_clicked)
         _ = self.format_dropdown.currentTextChanged.connect(self.on_format_changed)
+        _ = self.middle_bar.benchmarks_button.clicked.connect(self.on_benchmarks_clicked)
+        _ = self.output_folder_button.clicked.connect(self.on_choose_output_folder_clicked)
         self.on_format_changed(self.format_dropdown.currentText())
 
     def on_add_files_clicked(self) -> None:
@@ -108,6 +112,54 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def on_format_changed(self, format_name: str) -> None:
         self.middle_bar.rebuild(format_name.lower(), deps)
+
+    def on_benchmarks_clicked(self) -> None:
+        des_format = self.format_dropdown.currentText().lower()
+        self.log_message.emit("These are just the results from testing 263 254x450 png frames of a flat color animation using different encoding options for each of the 4 formats. Don't take these too literally as these are provided just for reference, because different encoders support different inputs, work better for specific kinds of content, have certain limitations, etc")
+        if des_format == "gif":
+            self.log_message.emit("""GIF Benchmarks
+Encoder  Quality  Speed    Time    Size     Min VMAF  Mean VMAF  Features
+Pillow   n/a      n/a      1.27 s  7.60 MB  94.70     99.57      Global color table; no dithering; disposal=2
+Pillow   n/a      n/a      0.87 s  4.04 MB  94.81     99.14      Local color table; disposal=2
+gifski   80       --fast   6.91 s  4.51 MB  95.68     99.40      --fast
+gifski   80       default  8.41 s  4.42 MB  95.58     99.40      Default
+gifski   80       --extra  14.56 s 4.33 MB  94.83     99.35      --extra""")
+        elif des_format == "apng":
+            self.log_message.emit("""APNG Benchmarks
+Encoder  Quality   Speed       Time     Size       Min VMAF  Mean VMAF  Features
+Pillow   lossless  compress=0  1.21 s   120.42 MB  97.43     99.77      Disposal=background; blend=source
+Pillow   lossless  compress=6  3.26 s   16.99 MB   97.43     99.77      Disposal=background; blend=source
+Pillow   lossless  compress=9  12.62 s  16.76 MB   97.43     99.77      Disposal=background; blend=source
+apngasm  lossless  default     25.00 s  14.18 MB   97.43     99.77      Default settings""")
+        elif des_format == "webp":
+            self.log_message.emit("""WebP Benchmarks
+Encoder   Quality  Speed  Time     Size     Min VMAF  Mean VMAF  Features
+Pillow    80       0      1.45 s   2.72 MB  95.16     99.31      Lossy
+Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy
+Pillow    80       6      81.84 s  1.93 MB  95.19     99.37      Lossy
+Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy; exact=True
+img2webp  80       0      1.71 s   2.73 MB  94.88     99.30      -lossy
+img2webp  80       4      3.31 s   1.95 MB  95.17     99.29      -lossy
+img2webp  80       6      76.16 s  1.94 MB  95.12     99.37      -lossy
+img2webp  80       4      3.37 s   1.94 MB  95.00     99.29      -lossy -exact
+img2webp  80       4      3.30 s   1.95 MB  95.17     99.29      -lossy -mixed
+img2webp  80       4      5.48 s   1.97 MB  95.01     99.26      -lossy -sharp_yuv
+img2webp  80       4      5.73 s   1.95 MB  94.98     99.27      -lossy -exact -mixed -sharp_yuv""")
+        elif des_format == "avif":
+            self.log_message.emit("""AVIF Benchmarks
+Encoder  Quality  Speed  Time       Size       Min VMAF  Mean VMAF  Features
+Pillow   80       10     2.73 s     1.99 MB    94.06     99.37      libaom
+Pillow   80       7      3.74 s     1.91 MB    95.49     99.47      libaom
+Pillow   80       6      57.41 s    1.34 MB    94.82     99.37      libaom
+Pillow   80       5      93.33 s    1.31 MB    95.04     99.39      libaom
+Pillow   80       3      165.40 s   1.28 MB    95.08     99.37      libaom
+Pillow   80       1      1131.68 s  1.28 MB    95.32     99.43      libaom
+ffmpeg   CRF 35   13     2.80 s     693.56 KB  91.97     97.73      libsvtav1
+ffmpeg   CRF 35   10     4.22 s     617.92 KB  90.70     97.75      libsvtav1
+ffmpeg   CRF 35   7      9.78 s     522.47 KB  92.16     97.88      libsvtav1
+ffmpeg   CRF 35   5      24.28 s    491.25 KB  92.94     98.31      libsvtav1
+ffmpeg   CRF 35   3      53.70 s    449.50 KB  93.53     98.43      libsvtav1
+ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1""")
 
     # Calculates an fps value using a list of delays or a custom delay value
     @staticmethod
@@ -294,7 +346,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             QMessageBox.warning(self, "Some conversions failed",
                 "The following files could not be converted:\n\n" + "\n".join(failures),)
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+    def closeEvent(self, event: QCloseEvent) -> None:
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait()
