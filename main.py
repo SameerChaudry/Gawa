@@ -103,8 +103,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def on_choose_output_folder_clicked(self) -> None:
         start_dir = str(self.output_dir or Path.home())
         folder = QFileDialog.getExistingDirectory(self, "Choose output folder", start_dir)
-        if not folder:
-            return
+        if not folder: return
 
         self.output_dir = Path(folder)
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
@@ -229,7 +228,10 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
         if(des_format == "gif"):
             if(deps["gifski"] and options["use_gifski"]):
                 fps = MainWindow.get_fps(delays, options)
-                cmd = ["gifski", "--quality", str(quality), "--fps", str(fps), "-o", str(out_path)] + frames
+                cmd = ["gifski", "--quality", str(quality), "--fps", str(fps)]
+                if options["gifski_speed"] == "Fast": cmd += ["--fast"]
+                elif options["gifski_speed"] == "Extra": cmd += ["--extra"]
+                cmd += ["-o", str(out_path)] + frames
                 subprocess.run(cmd, check=True)
                 return "gifski"
 
@@ -265,6 +267,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 elif quality == 100: cmd += ["-lossless"]
                 else: cmd += ["-lossy", "-q", str(quality)]
 
+                if options["exact"]: cmd += ["-exact"]
                 cmd += ["-m", str(speed)]
                 if options["sharp"] and (quality < 100 or mixed): cmd += ["-sharp_yuv"]
                 
@@ -277,7 +280,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 imgs = [Image.open(f) for f in frames]
                 webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                method=options["speed"], **webp_quality_options)
+                method=options["speed"], exact=options["exact"], **webp_quality_options)
                 return "pillow"
             
         if(des_format == "avif"):
@@ -297,9 +300,8 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
 
             else:
                 imgs = [Image.open(f) for f in frames]
-                avif_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                method=speed, subsampling=subsampling, **avif_quality_options)
+                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays,
+                speed=speed, subsampling=subsampling, quality=quality)
                 return "pillow"
         
         else:

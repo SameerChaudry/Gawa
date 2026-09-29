@@ -338,19 +338,25 @@ class MiddleBarWidget(QWidget):
     def _build_gif(self, deps: dict[str, bool]) -> None:
         local_color_table = QCheckBox("Local color table")
         gifski = QCheckBox("Use Gifski")
-        delay_label = QLabel("Delay:")
+        gifski_speed_label = QLabel("Speed:")
+        gifski_speed = QComboBox()
+        gifski_speed.addItems(["Default", "Fast", "Extra"])
+        delay_label = QLabel("Framerate Calculation:")
         combo = QComboBox()
         combo.addItems(["Mode", "Average", "Custom"])
+        combo.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
         spin = QSpinBox()
         spin.setRange(1, 9999)
         spin.setValue(20)
+        gifski_speed.setToolTip("Fast: Faster encode for slightly larger size\nExtra: Slower encode for slightly smaller size")
         self._speed_spinbox.setToolTip("Speed is unavailable for Gif")
 
-        for w in (local_color_table, gifski, delay_label, combo, spin):
+        for w in (local_color_table, gifski, gifski_speed_label, gifski_speed, delay_label, combo, spin):
             self._layout.addWidget(w)
 
         self.options["local_color_table"] = local_color_table
         self.options["use_gifski"] = gifski
+        self.options["gifski_speed"] = gifski_speed
         self.options["delay_mode"] = combo
         self.options["delay_ms"] = spin
 
@@ -383,6 +389,8 @@ class MiddleBarWidget(QWidget):
             delay_label.setVisible(use_gifski)
             combo.setVisible(use_gifski)
             spin.setVisible(use_gifski and combo.currentText() == "Custom")
+            gifski_speed_label.setVisible(use_gifski)
+            gifski_speed.setVisible(use_gifski)
 
         _ = gifski.toggled.connect(update_constraints)
         _ = local_color_table.toggled.connect(update_constraints)
@@ -420,10 +428,12 @@ class MiddleBarWidget(QWidget):
         self._quality_spinbox.setToolTip("APNG is lossless. Quality is always 100.")
 
     def _build_webp(self, deps: dict[str, bool]) -> None:
+        exact = QCheckBox("Use exact")
         use_img2webp = QCheckBox("Use img2webp")
         use_mixed = QCheckBox("Use mixed mode")
         sharp = QCheckBox("Use sharp RGB -> YUV conversion")
 
+        exact.setToolTip("Preserve RGB values in transparent pixels")
         use_img2webp.setEnabled(deps["img2webp"])
         use_img2webp.setToolTip(
             "Use img2webp for encoding. Provides better efficiency" if deps["img2webp"]
@@ -432,9 +442,10 @@ class MiddleBarWidget(QWidget):
         use_mixed.setToolTip("Let img2webp choose lossy or lossless compression per frame (slow)")
         sharp.setToolTip("Use img2webp's sharper RGB-to-YUV conversion (slower)")
 
-        for w in (use_img2webp, use_mixed, sharp):
+        for w in (exact, use_img2webp, use_mixed, sharp):
             self._layout.addWidget(w)
 
+        self.options["exact"] = exact
         self.options["use_img2webp"] = use_img2webp
         self.options["use_mixed"] = use_mixed
         self.options["sharp"] = sharp
@@ -470,9 +481,10 @@ class MiddleBarWidget(QWidget):
         crf.setValue(35)
         crf.setToolTip("Lower is better quality but larger size")
 
-        delay_label = QLabel("Delay:")
+        delay_label = QLabel("Framerate Calculation:")
         delay_mode = QComboBox()
         delay_mode.addItems(["Mode", "Average", "Custom"])
+        delay_mode.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
         delay_ms = QSpinBox()
         delay_ms.setRange(1, 9999)
         delay_ms.setValue(20)
@@ -527,7 +539,8 @@ class MiddleBarWidget(QWidget):
                 self._speed_spinbox.setToolTip("Pillow speed: Higher is faster but less efficient")
 
             self._quality_spinbox.setEnabled(not ffmpeg_active)
-            self._quality_spinbox.setToolTip("" if not ffmpeg_active else "Quality is set via Crf when using ffmpeg.")
+            self._quality_spinbox.setToolTip("100 quality is lossy since lossless isn't supported by Pillow"
+                if not ffmpeg_active else "Quality is set via Crf when using ffmpeg.")
 
         _ = use_ffmpeg.toggled.connect(update_constraints)
         _ = delay_mode.currentTextChanged.connect(update_constraints)
