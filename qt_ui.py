@@ -1,13 +1,15 @@
 """
 UI definition, hand-written to mirror pyside6-uic's generated-code style
 (including the inheritance pattern needed for basedpyright to see widgets as
-real, statically-known attributes). Only builds and arranges widgets: no
-file dialogs, no subprocess calls, no signal connections to backend logic.
-That all lives in main.py.
+real, statically-known attributes). Builds and arranges widgets, and loads
+thumbnail previews. Backend conversion and file dialogs live in main.py.
 """
 
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import override
 
@@ -17,6 +19,7 @@ from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -34,14 +37,61 @@ from PySide6.QtWidgets import (
 THUMBNAIL_SIZE = 120
 CELL_SPACING = 12
 MIN_COLUMNS = 1
+FFMPEG_PATH = shutil.which("ffmpeg")
+FFPROBE_PATH = shutil.which("ffprobe")
 
 
-def load_preview_pixmap(file_path: Path) -> QPixmap:
+def load_video_preview_image(file_path: Path) -> QImage:
+    """Decode a scaled frame at 5% of the video's duration using FFmpeg."""
+    if FFMPEG_PATH is None or FFPROBE_PATH is None:
+        return QImage()
+
+    probe = subprocess.run(
+        [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "format=duration:stream=duration", "-of", "json", str(file_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    probe_data = json.loads(probe.stdout)
+    duration_values = [probe_data.get("format", {}).get("duration")]
+    duration_values.extend(stream.get("duration") for stream in probe_data.get("streams", []))
+    duration = next(
+        (float(value) for value in duration_values if value not in (None, "N/A") and float(value) > 0),
+        None,
+    )
+    if duration is None:
+        return QImage()
+
+    result = subprocess.run(
+        [
+            FFMPEG_PATH, "-v", "error", "-ss", f"{duration * 0.05:.6f}", "-i", str(file_path),
+            "-frames:v", "1", "-vf", "scale=120:120:force_original_aspect_ratio=decrease",
+            "-f", "image2pipe", "-vcodec", "png", "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    image = QImage()
+    image.loadFromData(result.stdout)
+    return image
+
+
+def load_preview_pixmap(
+    file_path: Path,
+    video_suffixes: set[str] | None = None,
+) -> QPixmap:
     """Decode the first frame via Pillow rather than QPixmap(path), since Qt's
     AVIF plugin isn't guaranteed to ship with PySide6. Returns a null QPixmap
     on failure, same as a failed QPixmap(path) would.
     """
     try:
+        if (
+            video_suffixes is not None
+            and file_path.suffix.lower() in video_suffixes
+        ):
+            return QPixmap.fromImage(load_video_preview_image(file_path))
+
         with Image.open(file_path) as img:
             img.seek(0)
             rgba = img.convert("RGBA")
@@ -70,7 +120,12 @@ class ThumbnailWidget(QWidget):
 
     clicked: Signal = Signal()
 
-    def __init__(self, file_path: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        file_path: Path,
+        video_suffixes: set[str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.file_path: Path = file_path
         self._selected: bool = False
@@ -83,7 +138,7 @@ class ThumbnailWidget(QWidget):
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setStyleSheet("border: 1px solid palette(mid);")
 
-        pixmap = load_preview_pixmap(file_path)
+        pixmap = load_preview_pixmap(file_path, video_suffixes)
         if not pixmap.isNull():
             scaled = pixmap.scaled(
                 THUMBNAIL_SIZE,
@@ -138,6 +193,8 @@ class ImageGridWidget(QWidget):
     its column count as the available width changes.
     """
 
+    contents_changed: Signal = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.grid_layout: QGridLayout = QGridLayout(self)
@@ -147,13 +204,22 @@ class ImageGridWidget(QWidget):
         self._thumbnails: list[ThumbnailWidget] = []
         self._selected: set[ThumbnailWidget] = set()
         self._columns: int = MIN_COLUMNS
+        self._video_suffixes: set[str] = set()
 
     def add_image(self, file_path: Path) -> None:
-        thumbnail = ThumbnailWidget(file_path)
+        thumbnail = ThumbnailWidget(file_path, self._video_suffixes)
         _ = thumbnail.clicked.connect(lambda: self._toggle_selection(thumbnail))
         self._thumbnails.append(thumbnail)
         row, col = divmod(len(self._thumbnails) - 1, self._columns)
         self.grid_layout.addWidget(thumbnail, row, col)
+        self.contents_changed.emit()
+
+    def set_video_suffixes(self, suffixes: set[str]) -> None:
+        self._video_suffixes = {suffix.lower() for suffix in suffixes}
+        self.contents_changed.emit()
+
+    def has_video_inputs(self) -> bool:
+        return any(t.file_path.suffix.lower() in self._video_suffixes for t in self._thumbnails)
 
     def get_file_paths(self) -> list[Path]:
         """Return imported files in the order they were added."""
@@ -182,6 +248,7 @@ class ImageGridWidget(QWidget):
         self._thumbnails = kept
         self._selected.clear()
         self._reflow()
+        self.contents_changed.emit()
 
     def remove_all(self) -> None:
         for thumbnail in self._thumbnails:
@@ -190,6 +257,7 @@ class ImageGridWidget(QWidget):
 
         self._thumbnails.clear()
         self._selected.clear()
+        self.contents_changed.emit()
 
     def reflow_for_width(self, available_width: int) -> None:
         """Recompute column count from an externally-supplied width and reflow if it changed."""
@@ -269,6 +337,17 @@ class MiddleBarWidget(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._row_layout.addLayout(self._layout)
         self._row_layout.addStretch()
+        self.video_fps_label: QLabel = QLabel("Video FPS:")
+        self.video_fps_spinbox: QDoubleSpinBox = QDoubleSpinBox()
+        self.video_fps_spinbox.setRange(0, 90)
+        self.video_fps_spinbox.setDecimals(2)
+        self.video_fps_spinbox.setSingleStep(1)
+        self.video_fps_spinbox.setValue(0)
+        self.video_fps_spinbox.setToolTip("Frame rate used when decoding video inputs. 0 uses the video's source frame rate. Does not affect image inputs")
+        self.video_fps_label.hide()
+        self.video_fps_spinbox.hide()
+        self._row_layout.addWidget(self.video_fps_label)
+        self._row_layout.addWidget(self.video_fps_spinbox)
         self.benchmarks_button: QPushButton = QPushButton("Benchmarks")
         self._row_layout.addWidget(self.benchmarks_button)
         self._quality_spinbox: QSpinBox = quality_spinbox
@@ -552,7 +631,8 @@ class MiddleBarWidget(QWidget):
 class Ui_MainWindow:
     """Builds and arranges every widget onto `self`. Call as `self.setupUi(self)`
     from a class that inherits both QMainWindow and Ui_MainWindow -- see main.py.
-    No signals are connected here; that's main.py's job.
+    Only internal UI signals are connected here; backend signals are connected
+    in main.py.
     """
 
     # No __init__: giving Ui_MainWindow one makes basedpyright flag the
@@ -621,6 +701,7 @@ class Ui_MainWindow:
 
         # ---------- scrollable image grid ----------
         self.image_grid: ImageGridWidget = ImageGridWidget()  # pyright: ignore[reportUninitializedInstanceVariable]
+        _ = self.image_grid.contents_changed.connect(self.update_video_fps_visibility)
 
         scroll_area = ResizingScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -644,3 +725,13 @@ class Ui_MainWindow:
         self.content_splitter.setSizes([400, 120])
 
         root_layout.addWidget(self.content_splitter, 1)
+
+    def set_video_suffixes(self, suffixes: set[str]) -> None:
+        """Configure video file extensions used by the preview loader and FPS control."""
+        self.image_grid.set_video_suffixes(suffixes)
+
+    def update_video_fps_visibility(self) -> None:
+        """Show the FPS controls only when the grid contains a video input."""
+        has_video = self.image_grid.has_video_inputs()
+        self.middle_bar.video_fps_label.setVisible(has_video)
+        self.middle_bar.video_fps_spinbox.setVisible(has_video)

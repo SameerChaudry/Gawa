@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 import shutil
 import sys
+import json
+from fractions import Fraction
 from typing import Any
 from PIL import Image
 from pathlib import Path
@@ -19,6 +21,12 @@ deps = {
     "apngasm":  shutil.which("apngasm") is not None,
     "img2webp": shutil.which("img2webp") is not None,
     "ffmpeg":   shutil.which("ffmpeg") is not None,
+    "ffprobe":  shutil.which("ffprobe") is not None,
+}
+
+VIDEO_SUFFIXES = {
+    ".3gp", ".avi", ".flv", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg",
+    ".mpg", ".mts", ".ogv", ".ts", ".webm", ".wmv",
 }
 
 # Runs the conversion loop in a separate thread to avoid locking up the main thread
@@ -26,7 +34,7 @@ class ConversionWorker(QThread):
     log_message = Signal(str)
 
     def __init__(self, image_paths: list[Path], des_format: str, quality: int, options: dict[str, bool | int | str],
-        output_dir: Path, parent: QObject | None = None) -> None:
+        output_dir: Path, video_fps: float, parent: QObject | None = None) -> None:
 
         super().__init__(parent)
         self.image_paths = image_paths
@@ -34,6 +42,7 @@ class ConversionWorker(QThread):
         self.quality = quality
         self.options = options
         self.output_dir = output_dir
+        self.video_fps = video_fps
         self.failures: list[str] = []
 
     def run(self) -> None:
@@ -51,7 +60,7 @@ class ConversionWorker(QThread):
             self.log_message.emit(f"[{index}/{len(self.image_paths)}] Extracting {image_path.name}")
 
             try:
-                delays, extracter = MainWindow.dump_frames(image_path, frame_dir)
+                delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
                 if self.des_format == "gif":
                     adjusted_delays = sum(delay < 20 for delay in delays)
                     if adjusted_delays:
@@ -80,6 +89,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
+        self.set_video_suffixes(VIDEO_SUFFIXES)
         self.output_dir: Path | None = None
         self.worker: ConversionWorker | None = None
 
@@ -96,7 +106,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def on_add_files_clicked(self) -> None:
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select images", "", "Images (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg)"
+            self, "Select images and videos", "",
+            "Media (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg *.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.mpeg *.mpg *.m4v *.ts *.mts *.3gp *.ogv)"
         )
         for path_str in file_paths:
             self.image_grid.add_image(Path(path_str))
@@ -189,9 +200,55 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
 
     # Extracts frames as pngs
     @staticmethod
-    def dump_frames(image_path: Path, frame_dir: Path) -> tuple[list[int], str]:
+    def dump_frames(image_path: Path, frame_dir: Path, video_fps: float = 0) -> tuple[list[int], str]:
         if frame_dir.exists(): shutil.rmtree(frame_dir)
         frame_dir.mkdir()
+
+        if image_path.suffix.lower() in VIDEO_SUFFIXES:
+            if not deps["ffmpeg"]:
+                raise ValueError("Video input requires ffmpeg, but ffmpeg is not installed.")
+            if not deps["ffprobe"]:
+                raise ValueError("Video input requires ffprobe to detect its source frame rate.")
+
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                 "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(image_path)],
+                check=True, capture_output=True, text=True,
+            )
+            streams = json.loads(probe.stdout).get("streams", [])
+            if not streams:
+                raise ValueError("No video stream was found.")
+
+            source_fps: Fraction | None = None
+            for rate_name in ("avg_frame_rate", "r_frame_rate"):
+                rate_text = streams[0].get(rate_name, "")
+                try:
+                    rate = Fraction(rate_text)
+                except (ValueError, ZeroDivisionError):
+                    continue
+                if rate > 0:
+                    source_fps = rate
+                    break
+            if source_fps is None:
+                raise ValueError("Could not determine the video's source frame rate.")
+
+            fps = source_fps if video_fps == 0 else Fraction(str(video_fps))
+            frame_dir.mkdir(exist_ok=True)
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-vf", f"fps={fps}",
+                 "-fps_mode", "passthrough", "-start_number", "0", str(frame_dir / "frame_%04d.png")],
+                check=True, capture_output=True,
+            )
+            extracted = sorted(frame_dir.glob("frame_*.png"))
+            if not extracted:
+                raise ValueError("No video frames were decoded.")
+            frame_rate = float(fps)
+            delays_ms = [
+                max(1, round((index + 1) * 1000 / frame_rate) - round(index * 1000 / frame_rate))
+                for index in range(len(extracted))
+            ]
+            return delays_ms, f"ffmpeg ({frame_rate:g} fps)"
+
         with Image.open(image_path) as img:
             expected_frames = getattr(img, "n_frames", 1)
             delays_ms = []
@@ -337,9 +394,10 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
         des_format = self.format_dropdown.currentText().lower()
         quality = self.quality_spinbox.value()
         options = self.middle_bar.snapshot()
+        video_fps = self.middle_bar.video_fps_spinbox.value()
         self.make_convert_button.setEnabled(False)
 
-        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, self)
+        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, video_fps, self)
         _ = self.worker.log_message.connect(self.log_output.appendPlainText)
         _ = self.worker.finished.connect(self.on_conversion_finished)
         self.worker.start()

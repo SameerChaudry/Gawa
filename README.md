@@ -4,10 +4,9 @@ Each conversion is as efficient as I could make it (if all dependencies are in P
 
 I am unfamiliar with pyside6 so qt_ui.py is written by Claude
 
-Pyside6 and Pillow are required dependencies, while gifski, apngasm, img2webp, and ffmpeg are optional dependencies
+Pyside6 and Pillow are required dependencies, while gifski, apngasm, img2webp, ffmpeg, and ffprobe are optional dependencies
 
 Roadmap:
-- Video to animated image converter
 - Bit of extra polish/bug fixes/error handling
 - Releasing compiled executables for linux and windows after finishing basic features
 - Submitting to the AUR
