@@ -90,7 +90,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.on_format_changed(self.format_dropdown.currentText())
 
     def on_add_files_clicked(self) -> None:
-        file_paths, _ = QFileDialog.getOpenFileNames(self, "Select images", "", "Images (*.gif *.webp *.avif *.apng *.png)")
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select images", "", "Images (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg)"
+        )
         for path_str in file_paths:
             self.image_grid.add_image(Path(path_str))
 
@@ -226,7 +228,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
 
         if(des_format == "gif"):
-            if(deps["gifski"] and options["use_gifski"]):
+            if(deps["gifski"] and options["use_gifski"] and len(frames) > 1):
                 fps = MainWindow.get_fps(delays, options)
                 cmd = ["gifski", "--quality", str(quality), "--fps", str(fps)]
                 if options["gifski_speed"] == "Fast": cmd += ["--fast"]
