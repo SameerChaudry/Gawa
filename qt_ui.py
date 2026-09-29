@@ -346,8 +346,9 @@ class MiddleBarWidget(QWidget):
         combo.addItems(["Mode", "Average", "Custom"])
         combo.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
         spin = QSpinBox()
-        spin.setRange(1, 9999)
-        spin.setValue(20)
+        spin.setRange(20, 9999)
+        spin.setValue(50)
+        spin.setToolTip("Minimum delay is 20ms for gif. Lower values don't play properly in most browsers/image viewers")
         gifski_speed.setToolTip("Fast: Faster encode for slightly larger size\nExtra: Slower encode for slightly smaller size")
         self._speed_spinbox.setToolTip("Speed is unavailable for Gif")
 
@@ -486,8 +487,9 @@ class MiddleBarWidget(QWidget):
         delay_mode.addItems(["Mode", "Average", "Custom"])
         delay_mode.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
         delay_ms = QSpinBox()
-        delay_ms.setRange(1, 9999)
-        delay_ms.setValue(20)
+        delay_ms.setRange(11, 9999)
+        delay_ms.setValue(50)
+        delay_ms.setToolTip("Minimum delay for avif is 11ms. Lower values don't play properly in most browsers/image viewers")
 
         for w in (subsampling_label, subsampling, use_ffmpeg, crf_label, crf, delay_label, delay_mode, delay_ms):
             self._layout.addWidget(w)

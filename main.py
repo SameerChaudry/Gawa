@@ -52,6 +52,11 @@ class ConversionWorker(QThread):
 
             try:
                 delays, extracter = MainWindow.dump_frames(image_path, frame_dir)
+                if self.des_format == "gif":
+                    adjusted_delays = sum(delay < 20 for delay in delays)
+                    if adjusted_delays:
+                        delays = [20 if delay < 20 else delay for delay in delays]
+                        self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid more than 50 fps for gif")
                 self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
                 self.log_message.emit(f"Converting {image_path.name}")
                 encoder = MainWindow.assemble_frames(
