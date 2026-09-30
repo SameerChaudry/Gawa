@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
+from portal_dialog import choose_files_via_portal, choose_folder_via_portal
 import statistics
 
 deps = {
@@ -105,12 +106,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.on_format_changed(self.format_dropdown.currentText())
 
     def on_add_files_clicked(self) -> None:
-        file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select images and videos", "",
-            "Media (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg *.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.mpeg *.mpg *.m4v *.ts *.mts *.3gp *.ogv)"
-        )
-        for path_str in file_paths:
-            self.image_grid.add_image(Path(path_str))
+        file_paths = choose_files_via_portal("Select images and videos")
+        if file_paths is None:
+            file_paths, _ = QFileDialog.getOpenFileNames(
+                self, "Select images and videos", "",
+                "Media (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg *.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.mpeg *.mpg *.m4v *.ts *.mts *.3gp *.ogv)"
+            )
+            file_paths = [Path(path_str) for path_str in file_paths]
+        for file_path in file_paths:
+            self.image_grid.add_image(file_path)
 
     def on_remove_clicked(self) -> None:
         self.image_grid.remove_selected()
@@ -120,8 +124,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def on_choose_output_folder_clicked(self) -> None:
         start_dir = str(self.output_dir or Path.home())
-        folder = QFileDialog.getExistingDirectory(self, "Choose output folder", start_dir)
-        if not folder: return
+        folder = choose_folder_via_portal("Choose output folder")
+
+        if folder is None:
+            chosen = QFileDialog.getExistingDirectory(self, "Choose output folder", start_dir)
+            folder = Path(chosen) if chosen else None
+        if folder is None: return
 
         self.output_dir = Path(folder)
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
