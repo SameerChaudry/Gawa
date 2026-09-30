@@ -51,26 +51,30 @@ class ConversionWorker(QThread):
         reserved_outputs: set[Path] = set()
         frame_dir = Path("gawa_frames")
 
+        # Iterates over all inputs to extract frames and encode them as the selected image format
         for index, image_path in enumerate(self.image_paths, start=1):
             if self.isInterruptionRequested():
                 self.log_message.emit("Conversion cancelled.")
                 break
 
+            # Renames inputs with same name to avoid silent overwrites
             output_path = MainWindow.unique_output_path(
                 self.output_dir, image_path.stem, output_extension, reserved_outputs)
             self.log_message.emit(f"[{index}/{len(self.image_paths)}] Extracting {image_path.name}")
 
+            # Extracts image frames using pillow and video frames using ffmpeg and ffprobe (if available in PATH)
             try:
                 delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
                 if self.des_format == "gif":
                     adjusted_delays = sum(delay < 20 for delay in delays)
                     if adjusted_delays:
                         delays = [20 if delay < 20 else delay for delay in delays]
-                        self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid more than 50 fps for gif")
+                        self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid unintended behavior when playing back the gif")
                 self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
                 self.log_message.emit(f"Converting {image_path.name}")
-                encoder = MainWindow.assemble_frames(
-                    self.des_format, self.quality, delays, output_path, self.options)
+
+                # Encodes the selected image format using png frames in gawa_frames
+                encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options)
                 self.log_message.emit(f"Saved to {output_path} using {encoder}")
 
             except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -122,6 +126,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def on_remove_all_clicked(self) -> None:
         self.image_grid.remove_all()
 
+    # Tries to use the native file dialog portal via DBus for linux and
+    # falls back to native qt file dialog on failure, cancel or on Windows
     def on_choose_output_folder_clicked(self) -> None:
         start_dir = str(self.output_dir or Path.home())
         folder = choose_folder_via_portal("Choose output folder")
@@ -135,6 +141,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
         self.output_folder_button.setToolTip(str(self.output_dir))
 
+    # Rebuilds the middle bar to show different configuration options when the selected format changes
     def on_format_changed(self, format_name: str) -> None:
         self.middle_bar.rebuild(format_name.lower(), deps)
 
@@ -201,7 +208,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
 
         return max(1, round(1000 / max(1, int(delay_ms))))
 
-    # Extracts frames as pngs
+    # Extracts animation frames as individual pngs
     @staticmethod
     def dump_frames(image_path: Path, frame_dir: Path, video_fps: float = 0) -> tuple[list[int], str]:
         if frame_dir.exists(): shutil.rmtree(frame_dir)
@@ -211,6 +218,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
             if not deps["ffmpeg"] or not deps["ffprobe"]:
                 raise ValueError("Both ffmpeg and ffprobe need to be in PATH for processing video inputs")
 
+            # Uses ffprobe to get the source video fps
             probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate",
                 "-of", "json", str(image_path)], check=True, capture_output=True, text=True)
             streams = json.loads(probe.stdout).get("streams", [])
@@ -227,9 +235,10 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                     source_fps = rate
                     break
             if source_fps is None: raise ValueError("Could not determine the video's source frame rate.")
-
             fps = source_fps if video_fps == 0 else Fraction(str(video_fps))
             frame_dir.mkdir(exist_ok=True)
+
+            # Uses source fps or custom fps for extracting frames
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-vf", f"fps={fps}", "-fps_mode", "passthrough",
                 "-start_number", "0", str(frame_dir / "frame_%04d.png")], check=True, capture_output=True)
             extracted = sorted(frame_dir.glob("frame_*.png"))
@@ -240,6 +249,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 for index in range(len(extracted))]
             return delays_ms, f"ffmpeg ({frame_rate:g} fps)"
 
+        # Get animated image delay
         with Image.open(image_path) as img:
             expected_frames = getattr(img, "n_frames", 1)
             delays_ms = []
@@ -248,6 +258,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 img.load()
                 delays_ms.append(int(img.info.get("duration", 100) or 100))
 
+        # Extract animated image frames using ffmpeg if available
         # FFmpeg 9 seemed to only write a single frame for every tested avif for some reason 
         if deps["ffmpeg"] and image_path.suffix.lower() != ".avif":
             try:
@@ -261,7 +272,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
 
             except (OSError, subprocess.SubprocessError): pass
 
-        # Pillow fallback for when ffmpeg can't decode webp or has some other issue
+        # Pillow fallback for extracting frames if avif or if ffmpeg fails for some reason
         shutil.rmtree(frame_dir)
         frame_dir.mkdir()
         delays_ms = []

@@ -1,18 +1,11 @@
-"""
-UI definition, hand-written to mirror pyside6-uic's generated-code style
-(including the inheritance pattern needed for basedpyright to see widgets as
-real, statically-known attributes). Builds and arranges widgets, and loads
-thumbnail previews. Backend conversion and file dialogs live in main.py.
-"""
+# Handles all the gui related logic while leaving all the backend conversion to main.py
 
 from __future__ import annotations
-
 import json
 import shutil
 import subprocess
 from pathlib import Path
 from typing import override
-
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent
