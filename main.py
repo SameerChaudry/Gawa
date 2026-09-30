@@ -182,19 +182,14 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
     @staticmethod
     def get_fps(delays: list[int], options: dict[str, bool | int | str]) -> int:
         valid_delays = [delay for delay in delays if delay > 0]
-        if not valid_delays:
-            valid_delays = [100]
+        if not valid_delays: valid_delays = [100]
 
         delay_mode = options["delay_mode"]
 
-        if delay_mode == "Average":
-            delay_ms = sum(valid_delays) / len(valid_delays)
-        elif delay_mode == "Mode":
-            delay_ms = statistics.mode(valid_delays)
-        elif delay_mode == "Custom":
-            delay_ms = options["delay_ms"]
-        else:
-            raise ValueError(f"Unknown delay mode: {delay_mode}")
+        if delay_mode == "Average":  delay_ms = sum(valid_delays) / len(valid_delays)
+        elif delay_mode == "Mode":   delay_ms = statistics.mode(valid_delays)
+        elif delay_mode == "Custom": delay_ms = options["delay_ms"]
+        else: raise ValueError(f"Unknown delay mode: {delay_mode}")
 
         return max(1, round(1000 / max(1, int(delay_ms))))
 
@@ -205,19 +200,13 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
         frame_dir.mkdir()
 
         if image_path.suffix.lower() in VIDEO_SUFFIXES:
-            if not deps["ffmpeg"]:
-                raise ValueError("Video input requires ffmpeg, but ffmpeg is not installed.")
-            if not deps["ffprobe"]:
-                raise ValueError("Video input requires ffprobe to detect its source frame rate.")
+            if not deps["ffmpeg"] or not deps["ffprobe"]:
+                raise ValueError("Both ffmpeg and ffprobe need to be in PATH for processing video inputs")
 
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                 "stream=avg_frame_rate,r_frame_rate", "-of", "json", str(image_path)],
-                check=True, capture_output=True, text=True,
-            )
+            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+                "-of", "json", str(image_path)], check=True, capture_output=True, text=True)
             streams = json.loads(probe.stdout).get("streams", [])
-            if not streams:
-                raise ValueError("No video stream was found.")
+            if not streams: raise ValueError("No video stream was found.")
 
             source_fps: Fraction | None = None
             for rate_name in ("avg_frame_rate", "r_frame_rate"):
@@ -229,24 +218,18 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 if rate > 0:
                     source_fps = rate
                     break
-            if source_fps is None:
-                raise ValueError("Could not determine the video's source frame rate.")
+            if source_fps is None: raise ValueError("Could not determine the video's source frame rate.")
 
             fps = source_fps if video_fps == 0 else Fraction(str(video_fps))
             frame_dir.mkdir(exist_ok=True)
-            subprocess.run(
-                ["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-vf", f"fps={fps}",
-                 "-fps_mode", "passthrough", "-start_number", "0", str(frame_dir / "frame_%04d.png")],
-                check=True, capture_output=True,
-            )
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-vf", f"fps={fps}", "-fps_mode", "passthrough",
+                "-start_number", "0", str(frame_dir / "frame_%04d.png")], check=True, capture_output=True)
             extracted = sorted(frame_dir.glob("frame_*.png"))
-            if not extracted:
-                raise ValueError("No video frames were decoded.")
+            if not extracted: raise ValueError("No video frames were decoded.")
+
             frame_rate = float(fps)
-            delays_ms = [
-                max(1, round((index + 1) * 1000 / frame_rate) - round(index * 1000 / frame_rate))
-                for index in range(len(extracted))
-            ]
+            delays_ms = [max(1, round((index + 1) * 1000 / frame_rate) - round(index * 1000 / frame_rate))
+                for index in range(len(extracted))]
             return delays_ms, f"ffmpeg ({frame_rate:g} fps)"
 
         with Image.open(image_path) as img:
@@ -407,11 +390,9 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
         failures = worker.failures if worker is not None else []
         self.make_convert_button.setEnabled(True)
         self.worker = None
-        if worker is not None:
-            worker.deleteLater()
+        if worker is not None: worker.deleteLater()
         if failures:
-            QMessageBox.warning(self, "Some conversions failed",
-                "The following files could not be converted:\n\n" + "\n".join(failures),)
+            QMessageBox.warning(self, "Some conversions failed", "The following files could not be converted:\n\n" + "\n".join(failures),)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.worker is not None and self.worker.isRunning():
