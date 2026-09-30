@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import sys
 import json
+import tempfile
 from fractions import Fraction
 from typing import Any
 from PIL import Image
@@ -49,7 +50,6 @@ class ConversionWorker(QThread):
     def run(self) -> None:
         output_extension = "png" if self.des_format == "apng" else self.des_format
         reserved_outputs: set[Path] = set()
-        frame_dir = Path("gawa_frames")
 
         # Iterates over all inputs to extract frames and encode them as the selected image format
         for index, image_path in enumerate(self.image_paths, start=1):
@@ -64,26 +64,25 @@ class ConversionWorker(QThread):
 
             # Extracts image frames using pillow and video frames using ffmpeg and ffprobe (if available in PATH)
             try:
-                delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
-                if self.des_format == "gif":
-                    adjusted_delays = sum(delay < 20 for delay in delays)
-                    if adjusted_delays:
-                        delays = [20 if delay < 20 else delay for delay in delays]
-                        self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid unintended behavior when playing back the gif")
-                self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
-                self.log_message.emit(f"Converting {image_path.name}")
+                with tempfile.TemporaryDirectory(prefix="gawa-frames-") as temp_dir:
+                    frame_dir = Path(temp_dir)
+                    delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
+                    if self.des_format == "gif":
+                        adjusted_delays = sum(delay < 20 for delay in delays)
+                        if adjusted_delays:
+                            delays = [20 if delay < 20 else delay for delay in delays]
+                            self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid unintended behavior when playing back the gif")
+                    self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
+                    self.log_message.emit(f"Converting {image_path.name}")
 
-                # Encodes the selected image format using png frames in gawa_frames
-                encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options)
-                self.log_message.emit(f"Saved to {output_path} using {encoder}")
+                    # Encodes the selected image format using the extracted png frames
+                    encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options, frame_dir)
+                    self.log_message.emit(f"Saved to {output_path} using {encoder}")
 
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 failure = f"{image_path.name}: {error}"
                 self.failures.append(failure)
                 self.log_message.emit(f"Failed {failure}")
-                
-            finally:
-                shutil.rmtree(frame_dir, ignore_errors=True)
 
         if not self.failures and not self.isInterruptionRequested():
             self.log_message.emit("Conversion complete.")
@@ -286,8 +285,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
     # Encodes animations using a directory of frames and list of delays
     @staticmethod
     def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path,
-    options: dict[str, bool | int | str]) -> str:
-        frame_dir = Path("gawa_frames")
+    options: dict[str, bool | int | str], frame_dir: Path) -> str:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
 
