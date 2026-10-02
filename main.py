@@ -8,11 +8,11 @@ import sys
 import json
 import tempfile
 from fractions import Fraction
-from typing import Any
+from typing import Any, cast
 from PIL import Image
 from pathlib import Path
-from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QObject, QSettings, QThread, Signal
+from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
 from portal_dialog import choose_files_via_portal, choose_folder_via_portal
@@ -94,8 +94,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         super().__init__()
         self.setupUi(self)
         self.set_video_suffixes(VIDEO_SUFFIXES)
-        self.output_dir: Path | None = None
+        self.settings = QSettings("Gawa", "Gawa")
+        saved_output_dir = cast(str, self.settings.value("output_dir", "", type=str))
+        saved_path = Path(saved_output_dir).expanduser() if saved_output_dir else None
+        self.output_dir = saved_path if saved_path is not None and saved_path.is_dir() else None
         self.worker: ConversionWorker | None = None
+
+        if self.output_dir is not None:
+            self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
+            self.output_folder_button.setToolTip(str(self.output_dir))
 
         # underscore assignment just tells basedpyright that the returned connection object is useless
         _ = self.log_message.connect(self.log_output.appendPlainText)
@@ -137,6 +144,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if folder is None: return
 
         self.output_dir = Path(folder)
+        self.settings.setValue("output_dir", str(self.output_dir))
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
         self.output_folder_button.setToolTip(str(self.output_dir))
 
