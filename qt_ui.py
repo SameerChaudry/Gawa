@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import override
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent
+from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -703,8 +703,8 @@ class Ui_MainWindow:
         self.log_output: QPlainTextEdit = QPlainTextEdit()  # pyright: ignore[reportUninitializedInstanceVariable]
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumBlockCount(1000)
-        log_font = QFont("monospace", -1)
-        log_font.setStyleHint(QFont.StyleHint.Monospace)
+        log_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self.log_output.setFont(log_font)
         self.log_output.setFont(log_font)
         self.log_output.setMinimumHeight(80)
 
