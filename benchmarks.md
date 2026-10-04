@@ -1,22 +1,22 @@
-# Animation encoderBenchmark (GIF / APNG / AVIF / WebP)
+# Animation encoder benchmark (GIF / APNG / AVIF / WebP)
 
 Source: 263 frames, 254x450, 25 fps (40 ms/frame), extracted from a slightly lossy webp. Frames are fully opaque. All encodes use only the extracted PNG frames as input
 
-These are just the results from testing 263 254x450 png frames of a flat color animation using different encoding options for each of the 4 formats. Don't take these too literally as these are provided just for reference,Because different encoders support different inputs, work better for specific kinds of content, have certain limitations, etc
+These are just the results from testing 263 254x450 png frames of a flat color animation using different encoding options for each of the 4 formats. Don't take these too literally as these are provided just for reference, because different encoders support different inputs, work better for specific kinds of content, have certain limitations, etc
 
-**VMAF:** VMAF is a tool made by Netflix to objectively compare the quality of video content with a score from 0 to 100. Each output is decodedBack to per-frame PNGs (Pillow), converted to libsvtav1 y4m at 25 fps, and compared to the reference y4m with the standalone `vmaf` CLI (`vmaf_v0.6.1`), over all 263 frames.
+**VMAF:** VMAF is a tool made by Netflix to objectively compare the quality of video content with a score from 0 to 100. Each output is decoded back to per-frame PNGs (Pillow), converted to libsvtav1 y4m at 25 fps, and compared to the reference y4m with the standalone `vmaf` CLI (`vmaf_v0.6.1`), over all 263 frames.
 **Ceiling:** feeding the reference frames through this same pipeline scores min 97.43 / mean 99.77 (not 100), so read those as the best achievable values here. I have not pinned down why identical input doesn't reach 100.
 
-Environment: Pillow 12.1.1, ffmpeg 6.1.1 , apngasm 3.1.10, gifski 1.13.1. Each enocde was done sequentially on a single cpu core for consistency
+Environment: Pillow 12.1.1, ffmpeg 6.1.1 , apngasm 3.1.10, gifski 1.13.1. Each encode was done sequentially on a single cpu core for consistency
 ## GIF
 
 | Encoder | Quality used | Speed used | Time taken | File size | Minimum Vmaf | Mean Vmaf | Features |
 |---|---|---|---|---|---|---|---|
 | pillow | n/a | n/a | 1.27 s | 7,597,287B | 94.70 | 99.57 | Single color table for all frame, no dithering, `disposal=2` |
 | pillow local_color_table | n/a | n/a | 0.87 s | 4,041,885B | 94.81 | 99.14 | `include_color_table=True` (local table on every frame, verified with gifsicle), `disposal=2` |
-| gifski | 80 | `--fast` | 6.91 s | 4,511,557 B | 95.68 | 99.40 | `-Q 80 -r 25 --fast` |
+| gifski | 80 | `--fast` | 6.91 s | 4,511,557B | 95.68 | 99.40 | `-Q 80 -r 25 --fast` |
 | gifski | 80 | default | 8.41 s | 4,421,060B | 95.58 | 99.40 | `-Q 80 -r 25`, gifski handles palettes/disposal itself |
-| gifski | 80 | `--extra` | 14.56 s | 4,326,746 B | 94.83 | 99.35 | `-Q 80 -r 25 --extra` |
+| gifski | 80 | `--extra` | 14.56 s | 4,326,746B | 94.83 | 99.35 | `-Q 80 -r 25 --extra` |
 
 ## APNG
 
@@ -52,7 +52,10 @@ Environment: Pillow 12.1.1, ffmpeg 6.1.1 , apngasm 3.1.10, gifski 1.13.1. Each e
 
 ## WebP
 
-Pillow uses itsBundled libwebp 1.6.0. img2webp wasBuilt from libwebp v1.6.0 source (the apt 1.3.2Build has no `-exact`), soBoth use the same encoder version. img2webp defaults to lossless, so `-lossy -q 80` is passed for every frame. "Sharp rgb" is interpreted as `-sharp_yuv` (sharper RGB->YUV conversion).
+Pillow uses its bundled libwebp 1.6.0. img2webp was built from libwebp v1.6.0 source (the apt 1.3.2 build has no `-exact`), so both use the same encoder version. img2webp defaults to lossless, so `-lossy -q 80` is passed for every frame. "Sharp rgb" is interpreted as `-sharp_yuv` (sharper RGB->YUV conversion).
+
+Note: The img2webp implementation has been removed from Gawa since pillow already uses libwebp for encoding webp images so there is no reason to use standalone img2webp. So pillow will be used everytime instead
+Especially since it also doesn't make much of a difference like the benchmarks shown below
 
 | Encoder | Quality used | Speed used | Time taken | File size | Minimum Vmaf | Mean Vmaf | Features |
 |---|---|---|---|---|---|---|---|

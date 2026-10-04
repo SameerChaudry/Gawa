@@ -21,7 +21,6 @@ import statistics
 deps = {
     "gifski":   shutil.which("gifski") is not None,
     "apngasm":  shutil.which("apngasm") is not None,
-    "img2webp": shutil.which("img2webp") is not None,
     "ffmpeg":   shutil.which("ffmpeg") is not None,
     "ffprobe":  shutil.which("ffprobe") is not None,
 }
@@ -176,14 +175,10 @@ Encoder   Quality  Speed  Time     Size     Min VMAF  Mean VMAF  Features
 Pillow    80       0      1.45 s   2.72 MB  95.16     99.31      Lossy
 Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy
 Pillow    80       6      81.84 s  1.93 MB  95.19     99.37      Lossy
-Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy; exact=True
-img2webp  80       0      1.71 s   2.73 MB  94.88     99.30      -lossy
-img2webp  80       4      3.31 s   1.95 MB  95.17     99.29      -lossy
-img2webp  80       6      76.16 s  1.94 MB  95.12     99.37      -lossy
-img2webp  80       4      3.37 s   1.94 MB  95.00     99.29      -lossy -exact
-img2webp  80       4      3.30 s   1.95 MB  95.17     99.29      -lossy -mixed
-img2webp  80       4      5.48 s   1.97 MB  95.01     99.26      -lossy -sharp_yuv
-img2webp  80       4      5.73 s   1.95 MB  94.98     99.27      -lossy -exact -mixed -sharp_yuv""")
+Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy, exact=True
+
+Note: The exact=true result is identical to exact=false (default) because the tested animation was opaque with no transparent pixels, and exact=true only affects images with fully transparent pixels""")
+
         elif des_format == "avif":
             self.log_message.emit("""AVIF Benchmarks
 Encoder  Quality  Speed  Time       Size       Min VMAF  Mean VMAF  Features
@@ -310,7 +305,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, 
-                disposal=2, include_color_table=options["local_color_table"])
+                    disposal=2, include_color_table=options["local_color_table"])
                 return "pillow"
 
         if(des_format == "apng"):
@@ -326,34 +321,15 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                disposal=1, compress_level=options["speed"])
+                    disposal=1, compress_level=options["speed"])
                 return "pillow"
 
         if(des_format == "webp"):
-            if(deps["img2webp"] and options["use_img2webp"]):
-                cmd = ["img2webp", "-loop", "0"]
-                speed = options["speed"]
-                mixed = options["use_mixed"]
-
-                if mixed: cmd += ["-mixed", "-q", str(quality)]
-                elif quality == 100: cmd += ["-lossless"]
-                else: cmd += ["-lossy", "-q", str(quality)]
-
-                if options["exact"]: cmd += ["-exact"]
-                cmd += ["-m", str(speed)]
-                if options["sharp"] and (quality < 100 or mixed): cmd += ["-sharp_yuv"]
-                
-                for i, frame_path in enumerate(frames): cmd += ["-d", str(delays[i]), str(frame_path)]
-                cmd += ["-o", str(out_path)]
-                subprocess.run(cmd, check=True)
-                return "img2webp"
-
-            else:
-                imgs = [Image.open(f) for f in frames]
-                webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                method=options["speed"], exact=options["exact"], **webp_quality_options)
-                return "pillow"
+            imgs = [Image.open(f) for f in frames]
+            webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
+            imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, method=options["speed"],
+                exact=options["exact"], allow_mixed=options["use_mixed"], **webp_quality_options)
+            return "pillow"
             
         if(des_format == "avif"):
             speed = options["speed"]
@@ -373,7 +349,7 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
             else:
                 imgs = [Image.open(f) for f in frames]
                 imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays,
-                speed=speed, subsampling=subsampling, quality=quality)
+                    speed=speed, subsampling=subsampling, quality=quality)
                 return "pillow"
         
         else:

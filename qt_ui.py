@@ -502,41 +502,16 @@ class MiddleBarWidget(QWidget):
 
     def _build_webp(self, deps: dict[str, bool]) -> None:
         exact = QCheckBox("Use exact")
-        use_img2webp = QCheckBox("Use img2webp")
+        exact.setToolTip("Preserve RGB values in fully transparent pixels")
+        self._layout.addWidget(exact)
         use_mixed = QCheckBox("Use mixed mode")
-        sharp = QCheckBox("Use sharp RGB -> YUV conversion")
-
-        exact.setToolTip("Preserve RGB values in transparent pixels")
-        use_img2webp.setEnabled(deps["img2webp"])
-        use_img2webp.setToolTip(
-            "Use img2webp for encoding. Provides better efficiency" if deps["img2webp"]
-            else "Unavailable: img2webp isn't installed."
-        )
-        use_mixed.setToolTip("Let img2webp choose lossy or lossless compression per frame (slow)")
-        sharp.setToolTip("Use img2webp's sharper RGB-to-YUV conversion (slower)")
-
-        for w in (exact, use_img2webp, use_mixed, sharp):
-            self._layout.addWidget(w)
-
+        use_mixed.setToolTip("Let pillow choose lossy or lossless compression per frame (slow)")
+        self._layout.addWidget(use_mixed)
         self.options["exact"] = exact
-        self.options["use_img2webp"] = use_img2webp
         self.options["use_mixed"] = use_mixed
-        self.options["sharp"] = sharp
         self.options["speed"] = self._speed_spinbox
-
-        self._enable_speed(0, 6, 4, "Pillow WebP method: higher values are slower but may improve compression")
-
-        def update_constraints() -> None:
-            img2webp_active = use_img2webp.isChecked() and use_img2webp.isEnabled()
-            sharp.setVisible(img2webp_active)
-            use_mixed.setVisible(img2webp_active)
-            self._speed_spinbox.setToolTip(
-                "img2webp method: higher values are slower but may improve compression" if img2webp_active
-                else "Pillow WebP method: higher values are slower but may improve compression"
-            )
-
-        _ = use_img2webp.toggled.connect(update_constraints)
-        update_constraints()
+        self._enable_speed(0, 6, 4, "Higher values are slower but may improve compression")
+        self._speed_spinbox.setToolTip("Higher values are slower but may improve compression")
 
     def _build_avif(self, deps: dict[str, bool]) -> None:
         pillow_subsampling = ["4:0:0", "4:2:0", "4:2:2", "4:4:4"]
