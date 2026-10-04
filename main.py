@@ -157,11 +157,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if des_format == "gif":
             self.log_message.emit("""GIF Benchmarks
 Encoder  Quality  Speed    Time    Size     Min VMAF  Mean VMAF  Features
-Pillow   n/a      n/a      1.27 s  7.60 MB  94.70     99.57      Global color table; no dithering; disposal=2
-Pillow   n/a      n/a      0.87 s  4.04 MB  94.81     99.14      Local color table; disposal=2
+Pillow   n/a      n/a      1.27 s  7.60 MB  94.70     99.57      Global color table made by sampling 66 frames of the animation; no dithering; disposal=2
+Pillow   n/a      n/a      0.87 s  4.04 MB  94.81     99.14      Local color table (default); disposal=2
 gifski   80       --fast   6.91 s  4.51 MB  95.68     99.40      --fast
 gifski   80       default  8.41 s  4.42 MB  95.58     99.40      Default
-gifski   80       --extra  14.56 s 4.33 MB  94.83     99.35      --extra""")
+gifski   80       --extra  14.56 s 4.33 MB  94.83     99.35      --extra
+ffmpeg   n/a      n/a      1.03 s  6.90 MB  96.55     99.61      palettegen=stats_mode=diff + paletteuse=dither=none
+ffmpeg   n/a      n/a      2.28 s  7.95 MB  96.39     99.55      palettegen=stats_mode=diff + paletteuse=dither=sierra2_4a""")
         elif des_format == "apng":
             self.log_message.emit("""APNG Benchmarks
 Encoder  Quality   Speed       Time     Size       Min VMAF  Mean VMAF  Features
@@ -302,10 +304,21 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 subprocess.run(cmd, check=True)
                 return "gifski"
 
+            elif(deps["ffmpeg"] and options["use_ffmpeg"] and len(frames) > 1):
+                fps = MainWindow.get_fps(delays, options)
+                input_pattern = str(frame_dir / "frame_%04d.png")
+                dither = "sierra2_4a" if options["dither"] else "none"
+                subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf",
+                    "palettegen=stats_mode=diff", "-update", "1", str(frame_dir / "palette.png")], check=True)
+                subprocess.run(['ffmpeg','-y','-framerate', str(fps),'-i', input_pattern, '-i', str(frame_dir / "palette.png"),
+                    '-lavfi', f'paletteuse=dither={dither}', '-r', str(fps), str(out_path)], check=True)
+                return "ffmpeg"
+
+            # Use pillow for the gif encode. Uses local color table for every frame by default
+            # which is not supported by both gifski and ffmpeg
             else:
                 imgs = [Image.open(f) for f in frames]
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, 
-                    disposal=2, include_color_table=options["local_color_table"])
+                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,  disposal=2)
                 return "pillow"
 
         if(des_format == "apng"):

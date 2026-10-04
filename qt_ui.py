@@ -408,11 +408,17 @@ class MiddleBarWidget(QWidget):
         self._layout.addStretch()
 
     def _build_gif(self, deps: dict[str, bool]) -> None:
-        local_color_table = QCheckBox("Local color table")
         gifski = QCheckBox("Use Gifski")
+        use_ffmpeg = QCheckBox("Use ffmpeg")
+        dither = QCheckBox("Apply Dithering")
+        dither.setChecked(False)
+        dither.setToolTip("Apply sierra2_4a dithering to the GIF")
+
         gifski_speed_label = QLabel("Speed:")
         gifski_speed = QComboBox()
         gifski_speed.addItems(["Default", "Fast", "Extra"])
+        gifski_speed.setToolTip("Fast: Faster encode for slightly larger size\nExtra: Slower encode for slightly smaller size")
+
         delay_label = QLabel("Framerate Calculation:")
         combo = QComboBox()
         combo.addItems(["Mode", "Average", "Custom"])
@@ -421,52 +427,69 @@ class MiddleBarWidget(QWidget):
         spin.setRange(20, 9999)
         spin.setValue(50)
         spin.setToolTip("Minimum delay is 20ms for gif. Lower values don't play properly in most browsers/image viewers")
-        gifski_speed.setToolTip("Fast: Faster encode for slightly larger size\nExtra: Slower encode for slightly smaller size")
-        self._speed_spinbox.setToolTip("Speed is unavailable for Gif")
+        self._speed_spinbox.setToolTip("Speed is unavailable for GIF")
 
-        for w in (local_color_table, gifski, gifski_speed_label, gifski_speed, delay_label, combo, spin):
+        for w in (gifski, use_ffmpeg, dither, gifski_speed_label, gifski_speed, delay_label, combo, spin):
             self._layout.addWidget(w)
 
-        self.options["local_color_table"] = local_color_table
         self.options["use_gifski"] = gifski
+        self.options["use_ffmpeg"] = use_ffmpeg
+        self.options["dither"] = dither
         self.options["gifski_speed"] = gifski_speed
         self.options["delay_mode"] = combo
         self.options["delay_ms"] = spin
 
         self._quality_spinbox.setEnabled(False)
-        self._quality_spinbox.setToolTip("Pillow GIF encoding does not use quality. Use Gifski to adjust GIF quality")
+        self._quality_spinbox.setToolTip("Pillow and ffmpeg GIF encoding do not use quality. Use Gifski to adjust GIF quality")
 
         def update_constraints() -> None:
-            local_color_table.setEnabled(not gifski.isChecked())
-            local_color_table.setToolTip(
-                "Unavailable while Gifski is enabled" if gifski.isChecked()
-                else "Lets each frame have 255 colors instead of the whole gif at the cost of file size"
-            )
+            gifski_available = deps["gifski"]
+            ffmpeg_available = deps["ffmpeg"]
 
-            gifski_available = deps["gifski"] and not local_color_table.isChecked()
             gifski.setEnabled(gifski_available)
-            if not gifski_available:
-                gifski.setToolTip(
-                    "Unavailable: gifski isn't installed." if not deps["gifski"]
-                    else "Unavailable: incompatible with local color table"
-                )
-            else:
-                gifski.setToolTip("Most efficient gif encoder but doesn't support variable frame delay and local color tables")
+            use_ffmpeg.setEnabled(ffmpeg_available)
+            dither.setVisible(use_ffmpeg.isChecked() and ffmpeg_available)
+            gifski_speed_label.setVisible(gifski.isChecked() and gifski_available)
+            gifski_speed.setVisible(gifski.isChecked() and gifski_available)
 
-            use_gifski = gifski.isChecked() and gifski_available
-            self._quality_spinbox.setEnabled(use_gifski)
-            self._quality_spinbox.setToolTip(
-                "Gifski quality (higher is better)" if use_gifski
-                else "Pillow GIF encoding does not use quality. Use Gifski to adjust GIF quality."
-            )
-            delay_label.setVisible(use_gifski)
-            combo.setVisible(use_gifski)
-            spin.setVisible(use_gifski and combo.currentText() == "Custom")
-            gifski_speed_label.setVisible(use_gifski)
-            gifski_speed.setVisible(use_gifski)
+            if not gifski_available: gifski.setToolTip("Unavailable: gifski isn't installed")
+            else: gifski.setToolTip("Most efficient gif encoder but doesn't support variable frame delay and local color tables")
+
+            if not ffmpeg_available: use_ffmpeg.setToolTip("Unavailable: ffmpeg isn't installed")
+            else: use_ffmpeg.setToolTip("Use ffmpeg's palettegen/paletteuse pipeline. Uses a single palette for the entire GIF")
+
+            if gifski.isChecked() and gifski_available:
+                use_ffmpeg.setChecked(False)
+                use_ffmpeg.setEnabled(False)
+                self._quality_spinbox.setEnabled(True)
+                self._quality_spinbox.setToolTip("Gifski quality (higher is better)")
+                dither.setVisible(False)
+                delay_label.setVisible(True)
+                combo.setVisible(True)
+                spin.setVisible(combo.currentText() == "Custom")
+
+            elif use_ffmpeg.isChecked() and ffmpeg_available:
+                gifski.setChecked(False)
+                gifski.setEnabled(False)
+                self._quality_spinbox.setEnabled(False)
+                self._quality_spinbox.setToolTip("FFmpeg GIF encoding does not use quality")
+                dither.setVisible(True)
+                delay_label.setVisible(True)
+                combo.setVisible(True)
+                spin.setVisible(combo.currentText() == "Custom")
+
+            else:
+                if not gifski_available: gifski.setEnabled(False)
+                if not ffmpeg_available: use_ffmpeg.setEnabled(False)
+                self._quality_spinbox.setEnabled(False)
+                self._quality_spinbox.setToolTip("Pillow and ffmpeg GIF encoding do not use quality. Use Gifski to adjust GIF quality")
+                dither.setVisible(False)
+                delay_label.setVisible(False)
+                combo.setVisible(False)
+                spin.setVisible(False)
 
         _ = gifski.toggled.connect(update_constraints)
-        _ = local_color_table.toggled.connect(update_constraints)
+        _ = use_ffmpeg.toggled.connect(update_constraints)
         _ = combo.currentTextChanged.connect(update_constraints)
         update_constraints()
 

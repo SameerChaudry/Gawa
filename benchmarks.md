@@ -12,11 +12,13 @@ Environment: Pillow 12.1.1, ffmpeg 6.1.1 , apngasm 3.1.10, gifski 1.13.1. Each e
 
 | Encoder | Quality used | Speed used | Time taken | File size | Minimum Vmaf | Mean Vmaf | Features |
 |---|---|---|---|---|---|---|---|
-| pillow | n/a | n/a | 1.27 s | 7,597,287B | 94.70 | 99.57 | Single color table for all frame, no dithering, `disposal=2` |
-| pillow local_color_table | n/a | n/a | 0.87 s | 4,041,885B | 94.81 | 99.14 | `include_color_table=True` (local table on every frame, verified with gifsicle), `disposal=2` |
+| pillow | n/a | n/a | 1.27 s | 7,597,287B | 94.70 | 99.57 | Single color table for all frame, no dithering, `disposal=2`, palette was made by sampling 66 frames of the animation and then given to pillow via `palette`|
+| pillow | n/a | n/a | 0.87 s | 4,041,885B | 94.81 | 99.14 | `include_color_table=True` (local table on every frame by default, verified with gifsicle), `disposal=2` |
 | gifski | 80 | `--fast` | 6.91 s | 4,511,557B | 95.68 | 99.40 | `-Q 80 -r 25 --fast` |
 | gifski | 80 | default | 8.41 s | 4,421,060B | 95.58 | 99.40 | `-Q 80 -r 25`, gifski handles palettes/disposal itself |
 | gifski | 80 | `--extra` | 14.56 s | 4,326,746B | 94.83 | 99.35 | `-Q 80 -r 25 --extra` |
+| ffmpeg | n/a | n/a | 1.03 s | 6,902,799B | 96.55 | 99.61 | `palettegen=stats_mode=diff` + `paletteuse=dither=none` |
+| ffmpeg | n/a | n/a | 2.28 s | 7,947,560B | 96.39 | 99.55 | `palettegen=stats_mode=diff` + `paletteuse=dither=sierra2_4a` |
 
 ## APNG
 
