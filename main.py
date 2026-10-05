@@ -195,7 +195,9 @@ ffmpeg   CRF 35   10     4.22 s     617.92 KB  90.70     97.75      libsvtav1
 ffmpeg   CRF 35   7      9.78 s     522.47 KB  92.16     97.88      libsvtav1
 ffmpeg   CRF 35   5      24.28 s    491.25 KB  92.94     98.31      libsvtav1
 ffmpeg   CRF 35   3      53.70 s    449.50 KB  93.53     98.43      libsvtav1
-ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1""")
+ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1
+
+Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compared to pillow's default libaom AV1 encoder. But libsvtav1 doesn't support transparency and subsampling formats except yuv420p and yuv420p10le""")
 
     # Calculates an fps value using a list of delays or a custom delay value
     @staticmethod

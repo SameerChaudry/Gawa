@@ -575,7 +575,7 @@ class MiddleBarWidget(QWidget):
         ffmpeg_available = deps["ffmpeg"]
         use_ffmpeg.setEnabled(ffmpeg_available)
         use_ffmpeg.setToolTip(
-            "Best size/quality/speed tradeoff, using libsvtav1." if ffmpeg_available
+            "Best size/quality/speed tradeoff, using libsvtav1. But doesn't support transparency and subsampling formats except yuv420p and yuv420p10le" if ffmpeg_available
             else "Unavailable: ffmpeg isn't installed."
         )
 
