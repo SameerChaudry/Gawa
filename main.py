@@ -8,7 +8,7 @@ import sys
 import json
 import tempfile
 from fractions import Fraction
-from typing import Any, cast
+from typing import Any, Callable, cast
 from PIL import Image
 from pathlib import Path
 from PySide6.QtCore import QObject, QSettings, QThread, Signal
@@ -75,7 +75,7 @@ class ConversionWorker(QThread):
                     self.log_message.emit(f"Converting {image_path.name}")
 
                     # Encodes the selected image format using the extracted png frames
-                    encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options, frame_dir)
+                    encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options, frame_dir, self.log_message.emit)
                     self.log_message.emit(f"Saved to {output_path} using {encoder}")
 
             except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -289,10 +289,14 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
 
     # Encodes animations using a directory of frames and list of delays
     @staticmethod
-    def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path,
-    options: dict[str, bool | int | str], frame_dir: Path) -> str:
+    def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path, options: dict[str, bool | int | str],
+    frame_dir: Path, log_message: Callable[[str], None] | None = None) -> str:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
+
+        def log_fallback(encoder: str, error: Exception) -> None:
+            out_path.unlink(missing_ok=True)
+            if log_message is not None: log_message(f"{encoder} failed: {error}. Falling back to Pillow.")
 
         if(des_format == "gif"):
             if(deps["gifski"] and options["use_gifski"] and len(frames) > 1):
@@ -301,25 +305,30 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 if options["gifski_speed"] == "Fast": cmd += ["--fast"]
                 elif options["gifski_speed"] == "Extra": cmd += ["--extra"]
                 cmd += ["-o", str(out_path)] + frames
-                subprocess.run(cmd, check=True)
-                return "gifski"
+                try:
+                    subprocess.run(cmd, check=True)
+                    return "gifski"
+                except (OSError, subprocess.SubprocessError) as error:
+                    log_fallback("Gifski", error)
 
             elif(deps["ffmpeg"] and options["use_ffmpeg"] and len(frames) > 1):
                 fps = MainWindow.get_fps(delays, options)
                 input_pattern = str(frame_dir / "frame_%04d.png")
                 dither = "sierra2_4a" if options["dither"] else "none"
-                subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf",
-                    "palettegen=stats_mode=diff", "-update", "1", str(frame_dir / "palette.png")], check=True)
-                subprocess.run(['ffmpeg','-y','-framerate', str(fps),'-i', input_pattern, '-i', str(frame_dir / "palette.png"),
-                    '-lavfi', f'paletteuse=dither={dither}', '-r', str(fps), str(out_path)], check=True)
-                return "ffmpeg"
+                try:
+                    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf",
+                        "palettegen=stats_mode=diff", "-update", "1", str(frame_dir / "palette.png")], check=True)
+                    subprocess.run(['ffmpeg','-y','-framerate', str(fps),'-i', input_pattern, '-i', str(frame_dir / "palette.png"),
+                        '-lavfi', f'paletteuse=dither={dither}', '-r', str(fps), str(out_path)], check=True)
+                    return "ffmpeg"
+                except (OSError, subprocess.SubprocessError) as error:
+                    log_fallback("FFmpeg GIF encoder", error)
 
             # Use pillow for the gif encode. Uses local color table for every frame by default
             # which is not supported by both gifski and ffmpeg
-            else:
-                imgs = [Image.open(f) for f in frames]
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,  disposal=2)
-                return "pillow"
+            imgs = [Image.open(f) for f in frames]
+            imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,  disposal=2)
+            return "pillow"
 
         if(des_format == "apng"):
             if(deps["apngasm"] and options["use_apngasm"]):
@@ -328,14 +337,16 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 for frame_path, delay in zip(frames, delays):
                     cmd += [str(frame_path), str(delay)]
                 cmd += ["-F"]
-                subprocess.run(cmd, check=True)
-                return "apngasm"
+                try:
+                    subprocess.run(cmd, check=True)
+                    return "apngasm"
+                except (OSError, subprocess.SubprocessError) as error:
+                    log_fallback("apngasm", error)
 
-            else:
-                imgs = [Image.open(f) for f in frames]
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
-                    disposal=1, compress_level=options["speed"])
-                return "pillow"
+            imgs = [Image.open(f) for f in frames]
+            imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
+                disposal=1, compress_level=options["speed"])
+            return "pillow"
 
         if(des_format == "webp"):
             imgs = [Image.open(f) for f in frames]
@@ -354,19 +365,20 @@ ffmpeg   CRF 35   1      134.37 s   438.94 KB  93.56     98.45      libsvtav1"""
                 crf = str(options["crf"])
                 input_pattern = str(frame_dir / "frame_%04d.png")
 
-                subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf", "scale=in_range=full:out_range=full",
-                "-c:v", "libsvtav1", "-preset", str(speed), "-crf", crf, "-pix_fmt", pixel_format, "-color_range", "2",
-                "-f", "avif", "-loop", "0", str(out_path)], check=True)
-                return "ffmpeg"
+                try:
+                    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf", "scale=in_range=full:out_range=full",
+                    "-c:v", "libsvtav1", "-preset", str(speed), "-crf", crf, "-pix_fmt", pixel_format, "-color_range", "2",
+                    "-f", "avif", "-loop", "0", str(out_path)], check=True)
+                    return "ffmpeg"
+                except (OSError, subprocess.SubprocessError) as error:
+                    log_fallback("FFmpeg AVIF encoder", error)
 
-            else:
-                imgs = [Image.open(f) for f in frames]
-                imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays,
-                    speed=speed, subsampling=subsampling, quality=quality)
-                return "pillow"
+            imgs = [Image.open(f) for f in frames]
+            imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays,
+                speed=speed, subsampling=subsampling, quality=quality)
+            return "pillow"
         
-        else:
-            raise ValueError(f"Invalid output format: {des_format}")
+        else: raise ValueError(f"Invalid output format: {des_format}")
 
     # Use a unique filename suffix to avoid rewriting output files
     @staticmethod
