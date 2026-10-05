@@ -431,6 +431,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 def main() -> None:
     app = QApplication(sys.argv)
     window = MainWindow()
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name("gawa.svg"))))
     window.show()
     sys.exit(app.exec())
 

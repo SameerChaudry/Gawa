@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>GAWA</title>
+  <g transform="translate(-23.735 6.216) scale(1.13024)">
+  <!-- The frames -->
+  <g stroke="#10231a" stroke-width="8" stroke-linejoin="round">
+    <rect x="25"  y="82"  width="250" height="170" rx="14" fill="#3ddc84"/>
+    <rect x="95"  y="118" width="250" height="170" rx="14" fill="#00d4c8"/>
+    <rect x="155" y="154" width="250" height="170" rx="14" fill="#ffffff"/>
+    <rect x="220" y="190" width="250" height="170" rx="14" fill="#ffb000"/>
+  </g>
+
+  <!-- The letters -->
+  <g fill="none" stroke="#10231a" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <!-- G -->
+    <path transform="translate(60 170) scale(.50)" d="M 38.3 -32.1 A 50 50 0 1 0 50 0 L 8 0"/>
+    <!-- A -->
+    <path transform="translate(125 200) scale(.50)" d="M -34 50 L 0 -50 L 34 50 M -20 20 L 20 20"/>
+    <!-- W -->
+    <path transform="translate(185 240) scale(.50)" d="M -38 -50 L -19 50 L 0 -14 L 19 50 L 38 -50"/>
+    <!-- A -->
+    <path transform="translate(250 280) scale(.50)" d="M -34 50 L 0 -50 L 34 50 M -20 20 L 20 20"/>
+  </g>
+  </g>
+</svg>

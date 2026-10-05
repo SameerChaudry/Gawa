@@ -1,0 +1,9 @@
+nuitka==4.2.2
+ordered-set==4.1.0
+pillow==12.3.0
+pip==26.2.1
+pyside6==6.11.2
+pyside6-addons==6.11.2
+pyside6-essentials==6.11.2
+shiboken6==6.11.2
+zstandard==0.25.0
