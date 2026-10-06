@@ -4,4 +4,4 @@ Each conversion is as efficient as I could make it, like using png image sequenc
 
 Pyside6 and Pillow are required pip dependencies, while gifski, apngasm, ffmpeg, and ffprobe are optional dependencies. 
 
-I am unfamiliar with pyside6 and dbus parts of the Qt and dbus code is written by AI
+I am unfamiliar with pyside6 and dbus so parts of the Qt and dbus code is written by AI

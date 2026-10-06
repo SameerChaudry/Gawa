@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import override
 from PIL import Image
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QFont, QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
+from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
