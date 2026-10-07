@@ -11,11 +11,11 @@ from fractions import Fraction
 from typing import Any, Callable, cast
 from PIL import Image
 from pathlib import Path
-from PySide6.QtCore import QObject, QSettings, QThread, Signal
-from PySide6.QtGui import QCloseEvent, QIcon
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
+from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QShortcut
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
-from portal_dialog import choose_files_via_portal, choose_folder_via_portal
+from media_io import VIDEO_SUFFIXES, choose_files, choose_frame_folder, choose_output_folder, load_folder_frames
 import statistics
 
 deps = {
@@ -25,17 +25,12 @@ deps = {
     "ffprobe":  shutil.which("ffprobe") is not None,
 }
 
-VIDEO_SUFFIXES = {
-    ".3gp", ".avi", ".flv", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg",
-    ".mpg", ".mts", ".ogv", ".ts", ".webm", ".wmv",
-}
-
 # Runs the conversion loop in a separate thread to avoid locking up the main thread
 class ConversionWorker(QThread):
     log_message = Signal(str)
 
     def __init__(self, image_paths: list[Path], des_format: str, quality: int, options: dict[str, bool | int | str],
-        output_dir: Path, video_fps: float, parent: QObject | None = None) -> None:
+        output_dir: Path, video_fps: float, frames_fps: float, parent: QObject | None = None) -> None:
 
         super().__init__(parent)
         self.image_paths = image_paths
@@ -44,6 +39,7 @@ class ConversionWorker(QThread):
         self.options = options
         self.output_dir = output_dir
         self.video_fps = video_fps
+        self.frames_fps = frames_fps
         self.failures: list[str] = []
 
     def run(self) -> None:
@@ -58,14 +54,19 @@ class ConversionWorker(QThread):
 
             # Renames inputs with same name to avoid silent overwrites
             output_path = MainWindow.unique_output_path(
-                self.output_dir, image_path.stem, output_extension, reserved_outputs)
+                self.output_dir, image_path.name if image_path.is_dir() else image_path.stem, output_extension, reserved_outputs)
             self.log_message.emit(f"[{index}/{len(self.image_paths)}] Extracting {image_path.name}")
 
             # Extracts image frames using pillow and video frames using ffmpeg and ffprobe (if available in PATH)
             try:
                 with tempfile.TemporaryDirectory(prefix="gawa-frames-") as temp_dir:
                     frame_dir = Path(temp_dir)
-                    delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
+                    if image_path.is_dir():
+                        delays, extracter = load_folder_frames(image_path, frame_dir, 
+                            self.video_fps, self.frames_fps, MainWindow.dump_frames)
+                    else:
+                        delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
+
                     if self.des_format == "gif":
                         adjusted_delays = sum(delay < 20 for delay in delays)
                         if adjusted_delays:
@@ -79,7 +80,7 @@ class ConversionWorker(QThread):
                         output_path, self.options, frame_dir, self.log_message.emit)
                     self.log_message.emit(f"Saved to {output_path} using {encoder}")
 
-            except (OSError, ValueError, subprocess.SubprocessError) as error:
+            except Exception as error:
                 failure = f"{image_path.name}: {error}"
                 self.failures.append(failure)
                 self.log_message.emit(f"Failed {failure}")
@@ -106,28 +107,29 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         # underscore assignment just tells basedpyright that the returned connection object is useless
         _ = self.log_message.connect(self.log_output.appendPlainText)
-        _ = self.remove_button.clicked.connect(self.on_remove_clicked)
+        _ = self.add_folder_button.clicked.connect(self.on_add_folder_clicked)
         _ = self.add_files_button.clicked.connect(self.on_add_files_clicked)
         _ = self.remove_all_button.clicked.connect(self.on_remove_all_clicked)
         _ = self.make_convert_button.clicked.connect(self.on_make_convert_clicked)
         _ = self.format_dropdown.currentTextChanged.connect(self.on_format_changed)
         _ = self.middle_bar.benchmarks_button.clicked.connect(self.on_benchmarks_clicked)
         _ = self.output_folder_button.clicked.connect(self.on_choose_output_folder_clicked)
+
+        self.delete_shortcut = QShortcut(QKeySequence("Delete"), self)
+        self.delete_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        _ = self.delete_shortcut.activated.connect(self.image_grid.remove_selected)
+        self.backspace_shortcut = QShortcut(QKeySequence("Backspace"), self)
+        self.backspace_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        _ = self.backspace_shortcut.activated.connect(self.image_grid.remove_selected)
         self.on_format_changed(self.format_dropdown.currentText())
 
     def on_add_files_clicked(self) -> None:
-        file_paths = choose_files_via_portal("Select images and videos")
-        if file_paths is None:
-            file_paths, _ = QFileDialog.getOpenFileNames(
-                self, "Select images and videos", "",
-                "Media (*.gif *.webp *.avif *.apng *.png *.jpg *.jpeg *.mp4 *.mkv *.mov *.avi *.webm *.flv *.wmv *.mpeg *.mpg *.m4v *.ts *.mts *.3gp *.ogv)"
-            )
-            file_paths = [Path(path_str) for path_str in file_paths]
-        for file_path in file_paths:
+        for file_path in choose_files(self):
             self.image_grid.add_image(file_path)
 
-    def on_remove_clicked(self) -> None:
-        self.image_grid.remove_selected()
+    def on_add_folder_clicked(self) -> None:
+        folder = choose_frame_folder(self)
+        if folder is not None: self.image_grid.add_folder(folder)
 
     def on_remove_all_clicked(self) -> None:
         self.image_grid.remove_all()
@@ -135,12 +137,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     # Tries to use the native file dialog portal via DBus for linux and
     # falls back to native qt file dialog on failure, cancel or on Windows
     def on_choose_output_folder_clicked(self) -> None:
-        start_dir = str(self.output_dir or Path.home())
-        folder = choose_folder_via_portal("Choose output folder")
-
-        if folder is None:
-            chosen = QFileDialog.getExistingDirectory(self, "Choose output folder", start_dir)
-            folder = Path(chosen) if chosen else None
+        folder = choose_output_folder(self, str(self.output_dir or Path.home()))
         if folder is None: return
 
         self.output_dir = folder
@@ -407,9 +404,10 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
         quality = self.quality_spinbox.value()
         options = self.middle_bar.snapshot()
         video_fps = self.middle_bar.video_fps_spinbox.value()
+        frames_fps = self.middle_bar.frames_fps_spinbox.value()
         self.make_convert_button.setEnabled(False)
 
-        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, video_fps, self)
+        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, video_fps, frames_fps, self)
         _ = self.worker.log_message.connect(self.log_output.appendPlainText)
         _ = self.worker.finished.connect(self.on_conversion_finished)
         self.worker.start()

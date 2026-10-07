@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import override
 from PIL import Image
+from media_io import FRAME_SUFFIXES
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
 from PySide6.QtWidgets import (
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QSpinBox,
+    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -35,36 +37,19 @@ FFPROBE_PATH = shutil.which("ffprobe")
 
 # Decode a frame at 5% of the the video's duration
 def load_video_preview_image(file_path: Path) -> QImage:
-    """Decode a scaled frame at 5% of the video's duration using FFmpeg."""
-    if FFMPEG_PATH is None or FFPROBE_PATH is None:
-        return QImage()
+    if FFMPEG_PATH is None or FFPROBE_PATH is None: return QImage()
 
-    probe = subprocess.run(
-        [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "format=duration:stream=duration", "-of", "json", str(file_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    probe = subprocess.run([FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=duration", 
+        "-of", "json", str(file_path)], check=True, capture_output=True, text=True)
     probe_data = json.loads(probe.stdout)
     duration_values = [probe_data.get("format", {}).get("duration")]
     duration_values.extend(stream.get("duration") for stream in probe_data.get("streams", []))
-    duration = next(
-        (float(value) for value in duration_values if value not in (None, "N/A") and float(value) > 0),
-        None,
-    )
-    if duration is None:
-        return QImage()
+    duration = next((float(value) for value in duration_values if value not in (None, "N/A") and float(value) > 0), None)
+    if duration is None: return QImage()
 
-    result = subprocess.run(
-        [
-            FFMPEG_PATH, "-v", "error", "-ss", f"{duration * 0.05:.6f}", "-i", str(file_path),
-            "-frames:v", "1", "-vf", "scale=120:120:force_original_aspect_ratio=decrease",
-            "-f", "image2pipe", "-vcodec", "png", "pipe:1",
-        ],
-        check=True,
-        capture_output=True,
-    )
+    result = subprocess.run([FFMPEG_PATH, "-v", "error", "-ss", f"{duration * 0.05:.6f}", "-i", str(file_path),
+        "-frames:v", "1", "-vf", "scale=120:120:force_original_aspect_ratio=decrease",
+        "-f", "image2pipe", "-vcodec", "png", "pipe:1"],check=True, capture_output=True)
     image = QImage()
     image.loadFromData(result.stdout)
     return image
@@ -111,7 +96,11 @@ class ThumbnailWidget(QWidget):
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setStyleSheet("border: 1px solid palette(mid);")
 
-        pixmap = load_preview_pixmap(file_path, video_suffixes)
+        if file_path.is_dir():
+            pixmap = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon).pixmap(THUMBNAIL_SIZE - 24, THUMBNAIL_SIZE - 24)
+            image_label.setToolTip(str(file_path))
+        else: pixmap = load_preview_pixmap(file_path, video_suffixes)
+
         if not pixmap.isNull():
             scaled = pixmap.scaled(THUMBNAIL_SIZE, THUMBNAIL_SIZE,
                 Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
@@ -176,13 +165,32 @@ class ImageGridWidget(QWidget):
         self.grid_layout.addWidget(thumbnail, row, col)
         self.contents_changed.emit()
 
+    def add_folder(self, folder_path: Path) -> None:
+        thumbnail = ThumbnailWidget(folder_path, self._video_suffixes)
+        _ = thumbnail.clicked.connect(lambda: self._toggle_selection(thumbnail))
+        self._thumbnails.append(thumbnail)
+        row, col = divmod(len(self._thumbnails) - 1, self._columns)
+        self.grid_layout.addWidget(thumbnail, row, col)
+        self.contents_changed.emit()
+
     def set_video_suffixes(self, suffixes: set[str]) -> None:
         self._video_suffixes = {suffix.lower() for suffix in suffixes}
         self.contents_changed.emit()
 
     def has_video_inputs(self) -> bool:
-        return any(t.file_path.suffix.lower() in self._video_suffixes for t in self._thumbnails)
+        for thumbnail in self._thumbnails:
+            file_path = thumbnail.file_path
+            if file_path.is_dir():
+                try:
+                    if any(child.is_file() and child.suffix.lower() in self._video_suffixes
+                        for child in file_path.iterdir()):
+                            return True
 
+                except OSError: continue
+            elif file_path.suffix.lower() in self._video_suffixes: return True
+        return False
+
+    # Return imported file paths in the order they were added
     def get_file_paths(self) -> list[Path]:
         return [t.file_path for t in self._thumbnails]
 
@@ -275,6 +283,20 @@ class MiddleBarWidget(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._row_layout.addLayout(self._layout)
         self._row_layout.addStretch()
+
+        self.frames_fps_label: QLabel = QLabel("Frames FPS:")
+        self.frames_fps_spinbox: QDoubleSpinBox = QDoubleSpinBox()
+        self.frames_fps_spinbox.setRange(0.01, 90)
+        self.frames_fps_spinbox.setDecimals(2)
+        self.frames_fps_spinbox.setSingleStep(1)
+        self.frames_fps_spinbox.setValue(10)
+        self.frames_fps_spinbox.setToolTip("Frame rate used for static images in an imported frame folder")
+        self.frames_fps_label.hide()
+        self.frames_fps_spinbox.hide()
+
+        self._row_layout.addWidget(self.frames_fps_label)
+        self._row_layout.addWidget(self.frames_fps_spinbox)
+
         self.video_fps_label: QLabel = QLabel("Video FPS:")
         self.video_fps_spinbox: QDoubleSpinBox = QDoubleSpinBox()
         self.video_fps_spinbox.setRange(0, 90)
@@ -284,18 +306,33 @@ class MiddleBarWidget(QWidget):
         self.video_fps_spinbox.setToolTip("Frame rate used when decoding video inputs. 0 uses the video's source frame rate. Does not affect image inputs")
         self.video_fps_label.hide()
         self.video_fps_spinbox.hide()
+
         self._row_layout.addWidget(self.video_fps_label)
         self._row_layout.addWidget(self.video_fps_spinbox)
         self.benchmarks_button: QPushButton = QPushButton("Benchmarks")
         self._row_layout.addWidget(self.benchmarks_button)
+
         self._quality_spinbox: QSpinBox = quality_spinbox
         self._speed_label: QLabel = speed_label
         self._speed_spinbox: QSpinBox = speed_spinbox
         self._saved_quality_value: int = quality_spinbox.value()
         self._current_format: str | None = None
+        self._has_static_frames = False
+        self._frame_rate_conflict = False
         self.options: dict[str, QWidget] = {}
         _ = quality_spinbox.valueChanged.connect(self._remember_quality_value)
 
+    # Make "Frames FPS" visible if "Framerate calculation" isn't visible and visa versa
+    def update_frames_fps_visibility(self, has_static_frames: bool | None = None,
+    framerate_conflict: bool | None = None) -> None:
+        if has_static_frames is not None:  self._has_static_frames = has_static_frames
+        if framerate_conflict is not None: self._frame_rate_conflict = framerate_conflict
+        visible = self._has_static_frames and not self._frame_rate_conflict
+        self.frames_fps_label.setVisible(visible)
+        self.frames_fps_spinbox.setVisible(visible)
+        self.frames_fps_spinbox.setEnabled(visible)
+
+    # Restore the previously selected quality when switching away from apng since apng is lossless
     def _remember_quality_value(self, value: int) -> None:
         if self._current_format != "apng": self._saved_quality_value = value
 
@@ -328,6 +365,7 @@ class MiddleBarWidget(QWidget):
         self._current_format = fmt
         clear_layout(self._layout)
         self.options = {}
+        self.update_frames_fps_visibility(framerate_conflict=False)
         self._quality_spinbox.setEnabled(True)
         self._quality_spinbox.setToolTip("")
         self._speed_label.setEnabled(False)
@@ -379,6 +417,8 @@ class MiddleBarWidget(QWidget):
         def update_constraints() -> None:
             gifski_available = deps["gifski"]
             ffmpeg_available = deps["ffmpeg"]
+            ffmpeg_active = use_ffmpeg.isChecked() and ffmpeg_available
+            if ffmpeg_active: self.update_frames_fps_visibility(framerate_conflict=True)
 
             gifski.setEnabled(gifski_available)
             use_ffmpeg.setEnabled(ffmpeg_available)
@@ -421,6 +461,9 @@ class MiddleBarWidget(QWidget):
                 delay_label.setVisible(False)
                 combo.setVisible(False)
                 spin.setVisible(False)
+
+            if not ffmpeg_active:
+                self.update_frames_fps_visibility(framerate_conflict=False)
 
         _ = gifski.toggled.connect(update_constraints)
         _ = use_ffmpeg.toggled.connect(update_constraints)
@@ -512,6 +555,7 @@ class MiddleBarWidget(QWidget):
 
         def update_constraints() -> None:
             ffmpeg_active = use_ffmpeg.isChecked() and ffmpeg_available
+            if ffmpeg_active: self.update_frames_fps_visibility(framerate_conflict=True)
 
             current_choice = subsampling.currentText()
             subsampling.clear()
@@ -542,6 +586,8 @@ class MiddleBarWidget(QWidget):
             self._quality_spinbox.setEnabled(not ffmpeg_active)
             self._quality_spinbox.setToolTip("100 quality is lossy since lossless isn't supported by Pillow"
                 if not ffmpeg_active else "Quality is set via Crf when using ffmpeg.")
+            if not ffmpeg_active:
+                self.update_frames_fps_visibility(framerate_conflict=False)
 
         _ = use_ffmpeg.toggled.connect(update_constraints)
         _ = delay_mode.currentTextChanged.connect(update_constraints)
@@ -564,7 +610,7 @@ class Ui_MainWindow:
         top_bar = QHBoxLayout()
 
         self.add_files_button: QPushButton = QPushButton("Add Files")  # pyright: ignore[reportUninitializedInstanceVariable]
-        self.remove_button: QPushButton = QPushButton("Remove")  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.add_folder_button: QPushButton = QPushButton("Add Folder")  # pyright: ignore[reportUninitializedInstanceVariable]
         self.remove_all_button: QPushButton = QPushButton("Remove All")  # pyright: ignore[reportUninitializedInstanceVariable]
 
         convert_to_label = QLabel("Convert to:")
@@ -586,7 +632,7 @@ class Ui_MainWindow:
         self.output_folder_button: QPushButton = QPushButton("Choose folder...")  # pyright: ignore[reportUninitializedInstanceVariable]
 
         top_bar.addWidget(self.add_files_button)
-        top_bar.addWidget(self.remove_button)
+        top_bar.addWidget(self.add_folder_button)
         top_bar.addWidget(self.remove_all_button)
         top_bar.addWidget(convert_to_label)
         top_bar.addWidget(self.format_dropdown)
@@ -644,3 +690,20 @@ class Ui_MainWindow:
         has_video = self.image_grid.has_video_inputs()
         self.middle_bar.video_fps_label.setVisible(has_video)
         self.middle_bar.video_fps_spinbox.setVisible(has_video)
+        has_static_frames = False
+        for folder_path in self.image_grid.get_file_paths():
+            if not folder_path.is_dir(): continue
+
+            try:
+                for frame_path in folder_path.iterdir():
+                    if not frame_path.is_file() or frame_path.suffix.lower() not in FRAME_SUFFIXES:
+                        continue
+                    try:
+                        with Image.open(frame_path) as image:
+                            if getattr(image, "n_frames", 1) == 1:
+                                has_static_frames = True
+                                break
+                    except OSError: continue
+                if has_static_frames: break
+            except OSError: continue
+        self.middle_bar.update_frames_fps_visibility(has_static_frames=has_static_frames)
