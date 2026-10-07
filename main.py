@@ -7,6 +7,7 @@ import shutil
 import sys
 import json
 import tempfile
+import statistics
 from fractions import Fraction
 from typing import Any, Callable, cast
 from PIL import Image
@@ -15,8 +16,8 @@ from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal
 from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
-from media_io import VIDEO_SUFFIXES, choose_files, choose_frame_folder, choose_output_folder, load_folder_frames
-import statistics
+from media_io import (FRAME_SUFFIXES, VIDEO_SUFFIXES, choose_files,choose_frame_folder,
+    choose_output_folder, get_frame_files, load_folder_frames)
 
 deps = {
     "gifski":   shutil.which("gifski") is not None,
@@ -126,6 +127,21 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def on_add_files_clicked(self) -> None:
         for file_path in choose_files(self):
             self.image_grid.add_image(file_path)
+
+    # Import files/folders passed from the command line when launching
+    def import_startup_paths(self, paths: list[str]) -> None:
+        for argument in paths:
+            path = Path(argument).expanduser()
+            if path.is_dir():
+                try:
+                    if get_frame_files(path): self.image_grid.add_folder(path)
+                    else: self.log_message.emit(f"Skipped folder with no supported media: {path}")
+                except OSError as error: self.log_message.emit(f"Could not read folder {path}: {error}")
+
+            elif path.is_file() and path.suffix.lower() in FRAME_SUFFIXES | VIDEO_SUFFIXES:
+                self.image_grid.add_image(path)
+                self.log_message.emit(f"Imported: {path}")
+            else: self.log_message.emit(f"Skipped unsupported or missing path: {path}")
 
     def on_add_folder_clicked(self) -> None:
         folder = choose_frame_folder(self)
@@ -427,9 +443,11 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
             self.worker.wait()
         super().closeEvent(event)
 
-def main() -> None:
-    app = QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> None:
+    startup_paths = list(sys.argv[1:] if argv is None else argv)
+    app = QApplication([sys.argv[0]])
     window = MainWindow()
+    window.import_startup_paths(startup_paths)
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name("gawa.svg"))))
     window.show()
     sys.exit(app.exec())
