@@ -33,7 +33,7 @@ MIN_COLUMNS = 1
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
 
-
+# Decode a frame at 5% of the the video's duration
 def load_video_preview_image(file_path: Path) -> QImage:
     """Decode a scaled frame at 5% of the video's duration using FFmpeg."""
     if FFMPEG_PATH is None or FFPROBE_PATH is None:
@@ -69,20 +69,10 @@ def load_video_preview_image(file_path: Path) -> QImage:
     image.loadFromData(result.stdout)
     return image
 
-
-def load_preview_pixmap(
-    file_path: Path,
-    video_suffixes: set[str] | None = None,
-) -> QPixmap:
-    """Decode the first frame via Pillow rather than QPixmap(path), since Qt's
-    AVIF plugin isn't guaranteed to ship with PySide6. Returns a null QPixmap
-    on failure, same as a failed QPixmap(path) would.
-    """
+# Decode the first frame of an image with pillow
+def load_preview_pixmap(file_path: Path,video_suffixes: set[str] | None = None) -> QPixmap:
     try:
-        if (
-            video_suffixes is not None
-            and file_path.suffix.lower() in video_suffixes
-        ):
+        if (video_suffixes is not None and file_path.suffix.lower() in video_suffixes):
             return QPixmap.fromImage(load_video_preview_image(file_path))
 
         with Image.open(file_path) as img:
@@ -91,34 +81,24 @@ def load_preview_pixmap(
             data = rgba.tobytes("raw", "RGBA")
             qimage = QImage(data, rgba.width, rgba.height, QImage.Format.Format_RGBA8888)
             return QPixmap.fromImage(qimage.copy())  # .copy() so the QImage owns its data
-    except Exception:
-        return QPixmap()
+    except Exception: return QPixmap()
 
-
+# Detach and delete every widget in a layout while leaving the layout intact
 def clear_layout(layout: QLayout) -> None:
-    """Detach and delete every widget in a layout, leaving the layout itself intact."""
     while layout.count():
         item = layout.takeAt(0)
-        if item is None:
-            continue
+        if item is None: continue
         widget = item.widget()
-        if widget is not None:
-            widget.deleteLater()
+        if widget is not None: widget.deleteLater()
 
-
+# A grid cell with a scaled preview and filename underneath
+# Clicking selects/deselects an image, video or folder in the grid
 class ThumbnailWidget(QWidget):
-    """One grid cell: a scaled preview + filename. Clicking toggles selection;
-    ImageGridWidget owns the actual set of what's selected.
-    """
-
     clicked: Signal = Signal()
 
-    def __init__(
-        self,
-        file_path: Path,
-        video_suffixes: set[str] | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
+    def __init__(self, file_path: Path, video_suffixes: set[str] | None = None,
+        parent: QWidget | None = None) -> None:
+
         super().__init__(parent)
         self.file_path: Path = file_path
         self._selected: bool = False
@@ -133,12 +113,8 @@ class ThumbnailWidget(QWidget):
 
         pixmap = load_preview_pixmap(file_path, video_suffixes)
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                THUMBNAIL_SIZE,
-                THUMBNAIL_SIZE,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+            scaled = pixmap.scaled(THUMBNAIL_SIZE, THUMBNAIL_SIZE,
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             image_label.setPixmap(scaled)
         else:
             image_label.setText("(preview\nunavailable)")
@@ -168,24 +144,17 @@ class ThumbnailWidget(QWidget):
         # Only restyle the image label, not the whole widget, so the
         # filename text underneath doesn't get highlighted too.
         if self._selected:
-            self._image_label.setStyleSheet(
-                "border: 2px solid palette(highlight); background-color: palette(highlight);"
-            )
+            self._image_label.setStyleSheet("border: 2px solid palette(highlight); background-color: palette(highlight);")
         else:
             self._image_label.setStyleSheet("border: 1px solid palette(mid);")
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
+        if event.button() == Qt.MouseButton.LeftButton: self.clicked.emit()
         super().mousePressEvent(event)
 
-
+# The grid's content widget with own QGridLayout and reflows its column count as the available width changes
 class ImageGridWidget(QWidget):
-    """The scrollable grid's content widget: owns the QGridLayout and reflows
-    its column count as the available width changes.
-    """
-
     contents_changed: Signal = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -215,7 +184,6 @@ class ImageGridWidget(QWidget):
         return any(t.file_path.suffix.lower() in self._video_suffixes for t in self._thumbnails)
 
     def get_file_paths(self) -> list[Path]:
-        """Return imported files in the order they were added."""
         return [t.file_path for t in self._thumbnails]
 
     def _toggle_selection(self, thumbnail: ThumbnailWidget) -> None:
@@ -227,16 +195,14 @@ class ImageGridWidget(QWidget):
             thumbnail.set_selected(True)
 
     def remove_selected(self) -> None:
-        if not self._selected:
-            return
+        if not self._selected: return
 
         kept: list[ThumbnailWidget] = []
         for thumbnail in self._thumbnails:
             if thumbnail in self._selected:
                 self.grid_layout.removeWidget(thumbnail)
                 thumbnail.deleteLater()
-            else:
-                kept.append(thumbnail)
+            else: kept.append(thumbnail)
 
         self._thumbnails = kept
         self._selected.clear()
@@ -252,6 +218,7 @@ class ImageGridWidget(QWidget):
         self._selected.clear()
         self.contents_changed.emit()
 
+    # Recompute column count using width and reflow if needed
     def reflow_for_width(self, available_width: int) -> None:
         """Recompute column count from an externally-supplied width and reflow if it changed."""
         margins = self.grid_layout.contentsMargins()
@@ -263,22 +230,14 @@ class ImageGridWidget(QWidget):
             self._reflow()
 
     def _reflow(self) -> None:
-        # removeWidget() only detaches a widget from the layout's row/col
-        # bookkeeping -- it doesn't reparent or delete anything, so the same
-        # ThumbnailWidget instances survive and get re-added at new spots.
         for widget in self._thumbnails:
             self.grid_layout.removeWidget(widget)
         for index, widget in enumerate(self._thumbnails):
             row, col = divmod(index, self._columns)
             self.grid_layout.addWidget(widget, row, col)
 
-
+# QScrollArea that tells ImageGridWidget how wide the viewport is whenever it resizes
 class ResizingScrollArea(QScrollArea):
-    """QScrollArea that tells its ImageGridWidget how wide the viewport
-    actually is whenever it resizes, including when a scrollbar
-    appears/disappears purely from content changing.
-    """
-
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.viewport().installEventFilter(self)
@@ -294,31 +253,17 @@ class ResizingScrollArea(QScrollArea):
             self._reflow_grid()
         return super().eventFilter(watched, event)
 
+    # Always reserve room for the vertical scrollbar, even when not currently visible
     def _reflow_grid(self) -> None:
         grid = self.widget()
         if isinstance(grid, ImageGridWidget):
-            # Always reserve room for the vertical scrollbar, even when not
-            # currently visible -- otherwise adding a column can trigger a
-            # scrollbar that narrows the viewport without ever recomputing
-            # column count, leaving the grid permanently too wide.
             scrollbar_width = self.verticalScrollBar().sizeHint().width()
             grid.reflow_for_width(self.viewport().width() - scrollbar_width)
 
-
+# The row of format-specific conversion options between the top bar and the image grid
+# that builds new widgets based on the input and outputs formats for conversion
+# Also includes some right-aligned widgets like the persistent Benchmarks button
 class MiddleBarWidget(QWidget):
-    """The row of format-specific conversion options between the top bar and
-    the image grid: builds its own widgets per format and handles any
-    visual conflicts between them (greying out, hiding, tooltips).
-
-    `quality_spinbox` and the shared `speed_label`/`speed_spinbox` live in
-    the top bar but get reused/repurposed per format, so they're passed in
-    once from setupUi(). `deps` (passed into rebuild(), not stored) is a
-    plain name -> bool availability map from main.py's shutil.which() checks.
-
-    After rebuild(), `value(name)` is main.py's read API for the current
-    format's options -- it doesn't need to know which Qt widget backs each one.
-    """
-
     def __init__(
         self, quality_spinbox: QSpinBox, speed_label: QLabel, speed_spinbox: QSpinBox,
         parent: QWidget | None = None,
@@ -352,42 +297,31 @@ class MiddleBarWidget(QWidget):
         _ = quality_spinbox.valueChanged.connect(self._remember_quality_value)
 
     def _remember_quality_value(self, value: int) -> None:
-        # APNG forces this to 100 itself; don't let that overwrite the real
-        # value we'll want to restore once the user leaves APNG.
-        if self._current_format != "apng":
-            self._saved_quality_value = value
+        if self._current_format != "apng": self._saved_quality_value = value
 
+    # Set speed spinbox visibility and range as needed
     def _enable_speed(self, minimum: int, maximum: int, value: int, tooltip: str) -> None:
-        """Turn on the shared speed control and configure it for the current format."""
         self._speed_label.setEnabled(True)
         self._speed_spinbox.setEnabled(True)
         self._speed_spinbox.setRange(minimum, maximum)
         self._speed_spinbox.setValue(value)
         self._speed_spinbox.setToolTip(tooltip)
 
+    # Returns the current value of a widget
     def value(self, name: str) -> bool | int | str:
-        """Current value of a format-specific option: bool for checkboxes,
-        int for spinboxes, str for combo boxes.
-        """
         widget = self.options.get(name)
-        if widget is None:
-            raise KeyError(f"Option {name!r} is not available for this format")
-        if isinstance(widget, QCheckBox):
-            return widget.isChecked()
-        if isinstance(widget, QSpinBox):
-            return widget.value()
-        if isinstance(widget, QComboBox):
-            return widget.currentText()
+        if widget is None: raise KeyError(f"Option {name!r} is not available for this format")
+        if isinstance(widget, QCheckBox): return widget.isChecked()
+        if isinstance(widget, QSpinBox):  return widget.value()
+        if isinstance(widget, QComboBox): return widget.currentText()
         raise TypeError(f"Unsupported option widget for {name!r}: {type(widget).__name__}")
 
+    # Copy current option values so conversion workers don't need to read Qt widgets
     def snapshot(self) -> dict[str, bool | int | str]:
-        """Copy current option values so conversion workers never read Qt widgets."""
         return {name: self.value(name) for name in self.options}
 
+    # Clear and rebuild the row based on the output format
     def rebuild(self, fmt: str, deps: dict[str, bool]) -> None:
-        """Tear down and rebuild the row for `fmt` (already lowercased, e.g.
-        "gif"). Restores the quality spinbox's value if we're leaving APNG.
-        """
         if self._current_format == "apng":
             self._quality_spinbox.setValue(self._saved_quality_value)
 
@@ -517,8 +451,7 @@ class MiddleBarWidget(QWidget):
         _ = use_apngasm.toggled.connect(update_speed_availability)
         update_speed_availability()
 
-        # APNG is effectively lossless either way it's encoded, so "quality"
-        # doesn't apply here regardless of whether apngasm ends up checked.
+        # APNG is lossless so quality doesn't apply
         self._quality_spinbox.setEnabled(False)
         self._quality_spinbox.setValue(100)
         self._quality_spinbox.setToolTip("APNG is lossless. Quality is always 100.")
@@ -574,16 +507,12 @@ class MiddleBarWidget(QWidget):
         self._enable_speed(0, 10, 7, "Pillow speed: Higher values are faster")
         ffmpeg_available = deps["ffmpeg"]
         use_ffmpeg.setEnabled(ffmpeg_available)
-        use_ffmpeg.setToolTip(
-            "Best size/quality/speed tradeoff, using libsvtav1. But doesn't support transparency and subsampling formats except yuv420p and yuv420p10le" if ffmpeg_available
-            else "Unavailable: ffmpeg isn't installed."
-        )
+        use_ffmpeg.setToolTip("Best size/quality/speed tradeoff, using libsvtav1. But doesn't support transparency and subsampling formats except yuv420p and yuv420p10le" if ffmpeg_available
+            else "Unavailable: ffmpeg isn't installed.")
 
         def update_constraints() -> None:
             ffmpeg_active = use_ffmpeg.isChecked() and ffmpeg_available
 
-            # SVT-AV1's ffmpeg interface takes pixel-format names, not
-            # Pillow's subsampling values -- swap the combo to match.
             current_choice = subsampling.currentText()
             subsampling.clear()
             if ffmpeg_active:
@@ -618,19 +547,11 @@ class MiddleBarWidget(QWidget):
         _ = delay_mode.currentTextChanged.connect(update_constraints)
         update_constraints()
 
-
+# The main window's layout and widgets. All internal UI signals are connected here, but backend signals are connected in main.py
 class Ui_MainWindow:
-    """Builds and arranges every widget onto `self`. Call as `self.setupUi(self)`
-    from a class that inherits both QMainWindow and Ui_MainWindow -- see main.py.
-    Only internal UI signals are connected here; backend signals are connected
-    in main.py.
-    """
-
-    # No __init__: giving Ui_MainWindow one makes basedpyright flag the
-    # multiple inheritance in MainWindow(QMainWindow, Ui_MainWindow) as
-    # unsafe. setupUi() is this class's real initializer instead, so each
-    # attribute is annotated where it's assigned, with an inline ignore.
-
+    # No __init__ because giving Ui_MainWindow one makes basedpyright flag the
+    # multiple inheritance in MainWindow as unsafe. setupUi() is this class's real initializer instead
+    # so each attribute is annotated where it's assigned, with an inline ignore
     def setupUi(self, MainWindow: QMainWindow) -> None:
         MainWindow.setWindowTitle("Gawa")
         MainWindow.resize(700, 500)
@@ -685,9 +606,7 @@ class Ui_MainWindow:
         root_layout.addLayout(top_bar)
 
         # ---------- middle bar (format-specific conversion options) ----------
-        self.middle_bar: MiddleBarWidget = MiddleBarWidget(
-            self.quality_spinbox, self.speed_label, self.speed_spinbox
-        )  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.middle_bar: MiddleBarWidget = MiddleBarWidget(self.quality_spinbox, self.speed_label, self.speed_spinbox)  # pyright: ignore[reportUninitializedInstanceVariable]
         root_layout.addWidget(self.middle_bar)
 
         # ---------- scrollable image grid ----------
@@ -718,11 +637,10 @@ class Ui_MainWindow:
         root_layout.addWidget(self.content_splitter, 1)
 
     def set_video_suffixes(self, suffixes: set[str]) -> None:
-        """Configure video file extensions used by the preview loader and FPS control."""
         self.image_grid.set_video_suffixes(suffixes)
 
+    # Show "Video FPS" if any video inputs are present and "Frames FPS" if any static frames are present
     def update_video_fps_visibility(self) -> None:
-        """Show the FPS controls only when the grid contains a video input."""
         has_video = self.image_grid.has_video_inputs()
         self.middle_bar.video_fps_label.setVisible(has_video)
         self.middle_bar.video_fps_spinbox.setVisible(has_video)

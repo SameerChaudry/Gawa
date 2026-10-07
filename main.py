@@ -75,7 +75,8 @@ class ConversionWorker(QThread):
                     self.log_message.emit(f"Converting {image_path.name}")
 
                     # Encodes the selected image format using the extracted png frames
-                    encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays, output_path, self.options, frame_dir, self.log_message.emit)
+                    encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays,
+                        output_path, self.options, frame_dir, self.log_message.emit)
                     self.log_message.emit(f"Saved to {output_path} using {encoder}")
 
             except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -142,7 +143,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             folder = Path(chosen) if chosen else None
         if folder is None: return
 
-        self.output_dir = Path(folder)
+        self.output_dir = folder
         self.settings.setValue("output_dir", str(self.output_dir))
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
         self.output_folder_button.setToolTip(str(self.output_dir))
@@ -180,7 +181,6 @@ Pillow    80       6      81.84 s  1.93 MB  95.19     99.37      Lossy
 Pillow    80       4      3.63 s   1.94 MB  95.10     99.29      Lossy, exact=True
 
 Note: The exact=true result is identical to exact=false (default) because the tested animation was opaque with no transparent pixels, and exact=true only affects images with fully transparent pixels""")
-
         elif des_format == "avif":
             self.log_message.emit("""AVIF Benchmarks
 Encoder  Quality  Speed  Time       Size       Min VMAF  Mean VMAF  Features
@@ -240,6 +240,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 if rate > 0:
                     source_fps = rate
                     break
+
             if source_fps is None: raise ValueError("Could not determine the video's source frame rate.")
             fps = source_fps if video_fps == 0 else Fraction(str(video_fps))
             frame_dir.mkdir(exist_ok=True)
