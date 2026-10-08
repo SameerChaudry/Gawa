@@ -222,7 +222,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
         if delay_mode == "Average":  delay_ms = sum(valid_delays) / len(valid_delays)
         elif delay_mode == "Mode":   delay_ms = statistics.mode(valid_delays)
-        elif delay_mode == "Custom": delay_ms = options["delay_ms"]
+        elif delay_mode == "Custom fps": return int(options["custom_fps"])
         else: raise ValueError(f"Unknown delay mode: {delay_mode}")
 
         return max(1, round(1000 / max(1, int(delay_ms))))

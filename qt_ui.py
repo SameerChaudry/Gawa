@@ -34,6 +34,7 @@ CELL_SPACING = 12
 MIN_COLUMNS = 1
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
+MAX_FPS = {"gif": 50, "webp": 90, "avif": 90, "apng": 90}
 
 # Decode a frame at 5% of the the video's duration
 def load_video_preview_image(file_path: Path) -> QImage:
@@ -363,6 +364,11 @@ class MiddleBarWidget(QWidget):
             self._quality_spinbox.setValue(self._saved_quality_value)
 
         self._current_format = fmt
+        max_fps = MAX_FPS.get(fmt, 90)
+        self.frames_fps_spinbox.setMaximum(max_fps)
+        self.frames_fps_spinbox.setToolTip(f"Frame rate used for static images in an imported folder. Maximum {max_fps} fps for {fmt.upper()})")
+        self.video_fps_spinbox.setMaximum(max_fps)
+        self.video_fps_spinbox.setToolTip(f"Frame rate used when decoding video inputs. 0 uses the video's source frame rate. Maximum {max_fps} fps for {fmt.upper()}. Does not affect image inputs")
         clear_layout(self._layout)
         self.options = {}
         self.update_frames_fps_visibility(framerate_conflict=False)
@@ -393,12 +399,12 @@ class MiddleBarWidget(QWidget):
 
         delay_label = QLabel("Framerate Calculation:")
         combo = QComboBox()
-        combo.addItems(["Mode", "Average", "Custom"])
-        combo.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
+        combo.addItems(["Mode", "Average", "Custom fps"])
+        combo.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom fps: Uses a custom frame rate")
         spin = QSpinBox()
-        spin.setRange(20, 9999)
-        spin.setValue(50)
-        spin.setToolTip("Minimum delay is 20ms for gif. Lower values don't play properly in most browsers/image viewers")
+        spin.setRange(1, MAX_FPS["gif"])
+        spin.setValue(20)
+        spin.setToolTip("Maximum fps for gif is 50. Higher values don't play consistently across most browsers/image viewers")
         self._speed_spinbox.setToolTip("Speed is unavailable for GIF")
 
         for w in (gifski, use_ffmpeg, dither, gifski_speed_label, gifski_speed, delay_label, combo, spin):
@@ -409,7 +415,7 @@ class MiddleBarWidget(QWidget):
         self.options["dither"] = dither
         self.options["gifski_speed"] = gifski_speed
         self.options["delay_mode"] = combo
-        self.options["delay_ms"] = spin
+        self.options["custom_fps"] = spin
 
         self._quality_spinbox.setEnabled(False)
         self._quality_spinbox.setToolTip("Pillow and ffmpeg GIF encoding do not use quality. Use Gifski to adjust GIF quality")
@@ -440,7 +446,7 @@ class MiddleBarWidget(QWidget):
                 dither.setVisible(False)
                 delay_label.setVisible(True)
                 combo.setVisible(True)
-                spin.setVisible(combo.currentText() == "Custom")
+                spin.setVisible(combo.currentText() == "Custom fps")
 
             elif use_ffmpeg.isChecked() and ffmpeg_available:
                 gifski.setChecked(False)
@@ -450,7 +456,7 @@ class MiddleBarWidget(QWidget):
                 dither.setVisible(True)
                 delay_label.setVisible(True)
                 combo.setVisible(True)
-                spin.setVisible(combo.currentText() == "Custom")
+                spin.setVisible(combo.currentText() == "Custom fps")
 
             else:
                 if not gifski_available: gifski.setEnabled(False)
@@ -530,14 +536,14 @@ class MiddleBarWidget(QWidget):
 
         delay_label = QLabel("Framerate Calculation:")
         delay_mode = QComboBox()
-        delay_mode.addItems(["Mode", "Average", "Custom"])
-        delay_mode.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom: Uses a custom frame delay")
-        delay_ms = QSpinBox()
-        delay_ms.setRange(11, 9999)
-        delay_ms.setValue(50)
-        delay_ms.setToolTip("Minimum delay for avif is 11ms. Lower values don't play properly in most browsers/image viewers")
+        delay_mode.addItems(["Mode", "Average", "Custom fps"])
+        delay_mode.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom fps: Uses a custom frame rate")
+        custom_fps = QSpinBox()
+        custom_fps.setRange(1, MAX_FPS["avif"])
+        custom_fps.setValue(20)
+        custom_fps.setToolTip("Maximum fps for avif is 90. Higher values don't play consistently across most browsers/image viewers")
 
-        for w in (subsampling_label, subsampling, use_ffmpeg, crf_label, crf, delay_label, delay_mode, delay_ms):
+        for w in (subsampling_label, subsampling, use_ffmpeg, crf_label, crf, delay_label, delay_mode, custom_fps):
             self._layout.addWidget(w)
 
         self.options["subsampling"] = subsampling
@@ -545,7 +551,7 @@ class MiddleBarWidget(QWidget):
         self.options["use_ffmpeg"] = use_ffmpeg
         self.options["crf"] = crf
         self.options["delay_mode"] = delay_mode
-        self.options["delay_ms"] = delay_ms
+        self.options["custom_fps"] = custom_fps
 
         self._enable_speed(0, 10, 7, "Pillow speed: Higher values are faster")
         ffmpeg_available = deps["ffmpeg"]
@@ -574,7 +580,7 @@ class MiddleBarWidget(QWidget):
             crf.setVisible(ffmpeg_active)
             delay_label.setVisible(ffmpeg_active)
             delay_mode.setVisible(ffmpeg_active)
-            delay_ms.setVisible(ffmpeg_active and delay_mode.currentText() == "Custom")
+            custom_fps.setVisible(ffmpeg_active and delay_mode.currentText() == "Custom fps")
 
             if ffmpeg_active:
                 self._speed_spinbox.setRange(-2, 13)
