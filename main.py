@@ -355,12 +355,12 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
         if(des_format == "apng"):
             if(deps["apngasm"] and options["use_apngasm"]):
-                cmd = ["apngasm", "-o", str(out_path)]
-                
-                for frame_path, delay in zip(frames, delays):
-                    cmd += [str(frame_path), str(delay)]
-                cmd += ["-F"]
+                spec_path = frame_dir / "animation.json"
                 try:
+                    with spec_path.open("w", encoding="utf-8") as spec_file:
+                        json.dump({"frames": [{frame_path.name: f"{delay}/1000"}
+                            for frame_path, delay in zip(frames, delays)]}, spec_file)
+                    cmd = ["apngasm", "-o", str(out_path), "-f", str(spec_path), "-F"]
                     subprocess.run(cmd, check=True, creationflags=HIDE_CMD)
                     return "apngasm"
                 except (OSError, subprocess.SubprocessError) as error:
