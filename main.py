@@ -8,6 +8,7 @@ import sys
 import json
 import tempfile
 import statistics
+import time
 from fractions import Fraction
 from typing import Any, Callable, cast
 from PIL import Image
@@ -64,24 +65,28 @@ class ConversionWorker(QThread):
             try:
                 with tempfile.TemporaryDirectory(prefix="gawa-frames-") as temp_dir:
                     frame_dir = Path(temp_dir)
+                    extraction_started = time.perf_counter()
                     if image_path.is_dir():
                         delays, extracter = load_folder_frames(image_path, frame_dir, 
                             self.video_fps, self.frames_fps, MainWindow.dump_frames)
                     else:
                         delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
+                    extraction_seconds = time.perf_counter() - extraction_started
 
                     if self.des_format == "gif":
                         adjusted_delays = sum(delay < 20 for delay in delays)
                         if adjusted_delays:
                             delays = [20 if delay < 20 else delay for delay in delays]
                             self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid unintended behavior when playing back the gif")
-                    self.log_message.emit(f"Extracted {len(delays)} frames using {extracter}")
+                    self.log_message.emit(f"Extracted {len(delays)} frames using {extracter} in {extraction_seconds:.2f}s")
                     self.log_message.emit(f"Converting {image_path.name}")
 
                     # Encodes the selected image format using the extracted png frames
+                    encoding_started = time.perf_counter()
                     encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays,
                         output_path, self.options, frame_dir, self.log_message.emit)
-                    self.log_message.emit(f"Saved to {output_path} using {encoder}")
+                    encoding_seconds = time.perf_counter() - encoding_started
+                    self.log_message.emit(f"Saved to {output_path} using {encoder} in {encoding_seconds:.2f}s")
 
             except Exception as error:
                 failure = f"{image_path.name}: {error}"
