@@ -26,6 +26,8 @@ deps = {
     "ffprobe":  shutil.which("ffprobe") is not None,
 }
 
+HIDE_CMD = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 # Runs the conversion loop in a separate thread to avoid locking up the main thread
 class ConversionWorker(QThread):
     log_message = Signal(str)
@@ -239,7 +241,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
             # Uses ffprobe to get the source video fps
             probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate",
-                "-of", "json", str(image_path)], check=True, capture_output=True, text=True)
+                "-of", "json", str(image_path)], check=True, capture_output=True, text=True, creationflags=HIDE_CMD)
             streams = json.loads(probe.stdout).get("streams", [])
             if not streams: raise ValueError("No video stream was found.")
 
@@ -260,7 +262,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
             # Uses source fps or custom fps for extracting frames
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-vf", f"fps={fps}", "-fps_mode", "passthrough",
-                "-start_number", "0", str(frame_dir / "frame_%04d.png")], check=True, capture_output=True)
+                "-start_number", "0", str(frame_dir / "frame_%04d.png")], check=True, capture_output=True, creationflags=HIDE_CMD)
             extracted = sorted(frame_dir.glob("frame_*.png"))
             if not extracted: raise ValueError("No video frames were decoded.")
 
@@ -283,7 +285,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
         if deps["ffmpeg"] and image_path.suffix.lower() != ".avif":
             try:
                 subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-fps_mode", "passthrough", 
-                    str(frame_dir / "frame_%04d.png")], check=True, capture_output=True)
+                    str(frame_dir / "frame_%04d.png")], check=True, capture_output=True, creationflags=HIDE_CMD)
                 extracted = sorted(frame_dir.glob("frame_*.png"))
                 if len(extracted) == expected_frames:
                     for index, frame in enumerate(extracted):
@@ -322,7 +324,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 elif options["gifski_speed"] == "Extra": cmd += ["--extra"]
                 cmd += ["-o", str(out_path)] + frames
                 try:
-                    subprocess.run(cmd, check=True)
+                    subprocess.run(cmd, check=True, creationflags=HIDE_CMD)
                     return "gifski"
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("Gifski", error)
@@ -332,10 +334,10 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 input_pattern = str(frame_dir / "frame_%04d.png")
                 dither = "sierra2_4a" if options["dither"] else "none"
                 try:
-                    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf",
-                        "palettegen=stats_mode=diff", "-update", "1", str(frame_dir / "palette.png")], check=True)
+                    subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf","palettegen=stats_mode=diff",
+                        "-update", "1", str(frame_dir / "palette.png")], check=True, creationflags=HIDE_CMD)
                     subprocess.run(['ffmpeg','-y','-framerate', str(fps),'-i', input_pattern, '-i', str(frame_dir / "palette.png"),
-                        '-lavfi', f'paletteuse=dither={dither}', '-r', str(fps), str(out_path)], check=True)
+                        '-lavfi', f'paletteuse=dither={dither}', '-r', str(fps), str(out_path)], check=True, creationflags=HIDE_CMD)
                     return "ffmpeg"
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("FFmpeg GIF encoder", error)
@@ -354,7 +356,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                     cmd += [str(frame_path), str(delay)]
                 cmd += ["-F"]
                 try:
-                    subprocess.run(cmd, check=True)
+                    subprocess.run(cmd, check=True, creationflags=HIDE_CMD)
                     return "apngasm"
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("apngasm", error)
@@ -384,7 +386,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 try:
                     subprocess.run(["ffmpeg", "-y", "-framerate", str(fps), "-i", input_pattern, "-vf", "scale=in_range=full:out_range=full",
                     "-c:v", "libsvtav1", "-preset", str(speed), "-crf", crf, "-pix_fmt", pixel_format, "-color_range", "2",
-                    "-f", "avif", "-loop", "0", str(out_path)], check=True)
+                    "-f", "avif", "-loop", "0", str(out_path)], check=True, creationflags=HIDE_CMD)
                     return "ffmpeg"
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("FFmpeg AVIF encoder", error)

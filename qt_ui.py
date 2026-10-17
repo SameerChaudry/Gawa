@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import override
 from PIL import Image
@@ -35,13 +36,14 @@ MIN_COLUMNS = 1
 FFMPEG_PATH = shutil.which("ffmpeg")
 FFPROBE_PATH = shutil.which("ffprobe")
 MAX_FPS = {"gif": 50, "webp": 90, "avif": 90, "apng": 90}
+HIDE_CMD = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 # Decode a frame at 5% of the the video's duration
 def load_video_preview_image(file_path: Path) -> QImage:
     if FFMPEG_PATH is None or FFPROBE_PATH is None: return QImage()
 
     probe = subprocess.run([FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=duration", 
-        "-of", "json", str(file_path)], check=True, capture_output=True, text=True)
+        "-of", "json", str(file_path)], check=True, capture_output=True, text=True, creationflags=HIDE_CMD)
     probe_data = json.loads(probe.stdout)
     duration_values = [probe_data.get("format", {}).get("duration")]
     duration_values.extend(stream.get("duration") for stream in probe_data.get("streams", []))
@@ -49,8 +51,8 @@ def load_video_preview_image(file_path: Path) -> QImage:
     if duration is None: return QImage()
 
     result = subprocess.run([FFMPEG_PATH, "-v", "error", "-ss", f"{duration * 0.05:.6f}", "-i", str(file_path),
-        "-frames:v", "1", "-vf", "scale=120:120:force_original_aspect_ratio=decrease",
-        "-f", "image2pipe", "-vcodec", "png", "pipe:1"],check=True, capture_output=True)
+        "-frames:v", "1", "-vf", "scale=120:120:force_original_aspect_ratio=decrease","-f", "image2pipe",
+        "-vcodec", "png", "pipe:1"],check=True, capture_output=True, creationflags=HIDE_CMD)
     image = QImage()
     image.loadFromData(result.stdout)
     return image
