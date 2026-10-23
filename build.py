@@ -2,18 +2,11 @@
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 IS_WINDOWS = sys.platform == "win32"
-
-COMMON_ARGS = [
-    "--onefile",
-    "--enable-plugin=pyside6",
-    f"--include-data-files={ROOT / 'gawa.svg'}=gawa.svg",
-    "--output-dir=dist/onefile",
-    "--output-filename=Gawa",
-]
 
 WINDOWS_ARGS = [
     "--msvc=latest",
@@ -29,8 +22,10 @@ def main() -> int:
         print("""WARNING: This does not appear to be a virtual-environment Python. Run this script with your project's venv interpreter
             so Nuitka and the application dependencies come from the expected environment""",file=sys.stderr)
 
-    args = [python, "-m", "nuitka", *COMMON_ARGS]
+    args = [python, "-m", "nuitka", "--onefile", "--enable-plugin=pyside6", f"--include-data-files={ROOT / 'gawa.svg'}=gawa.svg",
+        "--output-dir=dist/onefile", "--output-filename=Gawa"]
     if IS_WINDOWS: args += WINDOWS_ARGS
+    if os.environ.get("CI"): args.append("--assume-yes-for-downloads")
     args.append(str(ROOT / "main.py"))
 
     print(f"Building for {'Windows' if IS_WINDOWS else 'Linux'}...")
