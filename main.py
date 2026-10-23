@@ -86,7 +86,8 @@ class ConversionWorker(QThread):
                     encoder = MainWindow.assemble_frames(self.des_format, self.quality, delays,
                         output_path, self.options, frame_dir, self.log_message.emit)
                     encoding_seconds = time.perf_counter() - encoding_started
-                    self.log_message.emit(f"Saved to {output_path} using {encoder} in {encoding_seconds:.2f}s")
+                    output_size = output_path.stat().st_size
+                    self.log_message.emit(f"Saved to {output_path} using {encoder} in {encoding_seconds:.2f}s ({output_size / 1_048_576:.2f} MiB)")
 
             except Exception as error:
                 failure = f"{image_path.name}: {error}"
