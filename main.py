@@ -13,8 +13,8 @@ from fractions import Fraction
 from typing import Any, Callable, cast
 from PIL import Image
 from pathlib import Path
-from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, QSettings, QThread, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QDragEnterEvent, QDropEvent, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 from qt_ui import Ui_MainWindow
 from media_io import (FRAME_SUFFIXES, VIDEO_SUFFIXES, choose_files,choose_frame_folder,
@@ -103,6 +103,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setupUi(self)
+        self.setAcceptDrops(True)
         self.set_video_suffixes(VIDEO_SUFFIXES)
         self.settings = QSettings("Gawa", "Gawa")
         saved_output_dir = cast(str, self.settings.value("output_dir", "", type=str))
@@ -135,6 +136,23 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def on_add_files_clicked(self) -> None:
         for file_path in choose_files(self):
             self.image_grid.add_image(file_path)
+
+    def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.DragEnter:
+            drag_event = cast(QDragEnterEvent, event)
+            if drag_event.mimeData().hasUrls() and any(url.isLocalFile() for url in drag_event.mimeData().urls()):
+                drag_event.acceptProposedAction()
+                return True
+
+        elif event.type() == QEvent.Type.Drop:
+            drop_event = cast(QDropEvent, event)
+            paths = [url.toLocalFile() for url in drop_event.mimeData().urls() if url.isLocalFile()]
+            if paths:
+                self.import_startup_paths(paths)
+                drop_event.acceptProposedAction()
+                return True
+                
+        return super().event(event)
 
     # Import files/folders passed from the command line when launching
     def import_startup_paths(self, paths: list[str]) -> None:
