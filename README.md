@@ -9,7 +9,7 @@ I am unfamiliar with pyside6 and dbus so parts of the Qt and dbus code is writte
 ## Features
 - Convert images, animations, or videos to a gif, apng, webp, or avif using multiple configuration options
 - Import a folder with any combination of images, animations, or videos to make a single animation using all of them in alphabetical order. For instance: '00_image.png', 01_anim.gif, '02_video.mp4', '03_image.jpg', '04_anim.avif' in a folder will be encoded in this order
-- Passing file/folder paths from the command line imports them on launch
+- Import files/folders by passing file/folder paths from the command line on launch, dragging them onto the window, or using the UI buttons
 - Uses ffmpeg for frame extraction and allows using img2webp, apngasm, or ffmpeg for better efficiency for certain formats if available in PATH
 - An image grid to preview your input files and an in-app log to track progress and report errors
 
