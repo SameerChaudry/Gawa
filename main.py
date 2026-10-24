@@ -329,6 +329,16 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 delays_ms.append(int(img.info.get("duration", 100) or 100))
         return delays_ms, "pillow"
 
+    # Loads, copy, and close each image instead of keeping all frame images open as once
+    @staticmethod
+    def load_frames(frames: list[Path]) -> list[Image.Image]:
+        loaded: list[Image.Image] = []
+        for frame_path in frames:
+            with Image.open(frame_path) as image:
+                image.load()
+                loaded.append(image.copy())
+        return loaded
+
     # Encodes animations using a directory of frames and list of delays
     @staticmethod
     def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path, options: dict[str, bool | int | str],
@@ -368,7 +378,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
             # Use pillow for the gif encode. Uses local color table for every frame by default
             # which is not supported by both gifski and ffmpeg
-            imgs = [Image.open(f) for f in frames]
+            imgs = MainWindow.load_frames(frames)
             imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,  disposal=2)
             return "pillow"
 
@@ -385,13 +395,13 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("apngasm", error)
 
-            imgs = [Image.open(f) for f in frames]
+            imgs = MainWindow.load_frames(frames)
             imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0,
                 disposal=1, compress_level=options["speed"])
             return "pillow"
 
         if(des_format == "webp"):
-            imgs = [Image.open(f) for f in frames]
+            imgs = MainWindow.load_frames(frames)
             webp_quality_options: dict[str, Any] = {"lossless": True} if quality == 100 else {"quality": quality}
             imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays, loop=0, method=options["speed"],
                 exact=options["exact"], allow_mixed=options["use_mixed"], **webp_quality_options)
@@ -415,7 +425,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
                 except (OSError, subprocess.SubprocessError) as error:
                     log_fallback("FFmpeg AVIF encoder", error)
 
-            imgs = [Image.open(f) for f in frames]
+            imgs = MainWindow.load_frames(frames)
             imgs[0].save(out_path, save_all=True, append_images=imgs[1:], duration=delays,
                 speed=speed, subsampling=subsampling, quality=quality)
             return "pillow"
