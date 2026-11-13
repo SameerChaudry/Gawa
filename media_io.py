@@ -93,9 +93,10 @@ def get_frame_files(folder_path: Path) -> list[Path]:
 
 # Load all images, animations, and videos in the folder as a png frame sequence
 # Frames use "Frames fps", animations use source fps, and videos use "Video fps"
-# Frames are padded with transparency to fill the maximum width and height if needed
+# Frames retain their native dimensions for post-extraction canvas normalization
 def load_folder_frames(folder_path: Path, frame_dir: Path, video_fps: float, frames_fps: float,
-    dump_frames: Callable[[Path, Path, float], tuple[list[int], str]]) -> tuple[list[int], str]:
+    dump_frames: Callable[[Path, Path, float], tuple[list[int], str]],
+    preserve_frame_sizes: bool = False) -> tuple[list[int], str]:
 
     media_files = get_frame_files(folder_path)
     if not media_files: raise ValueError("The folder contains no supported image or video files.")
@@ -107,14 +108,17 @@ def load_folder_frames(folder_path: Path, frame_dir: Path, video_fps: float, fra
     max_height = 0
     ordered_frames: list[Path] = []
     delays_ms: list[int] = []
+    extractors: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="gawa-folder-", dir=frame_dir) as temp_name:
         temp_dir = Path(temp_name)
         for media_index, media_path in enumerate(media_files):
             if media_path.suffix.lower() in VIDEO_SUFFIXES:
                 video_dir = temp_dir / f"video-{media_index:04d}"
-                media_delays, _ = dump_frames(media_path, video_dir, video_fps)
+                media_delays, extractor = dump_frames(media_path, video_dir, video_fps)
+                extractors.add("ffmpeg" if extractor.lower().startswith("ffmpeg") else "pillow")
                 frames = sorted(video_dir.glob("frame_*.png"))
             else:
+                extractors.add("pillow")
                 frames = []
                 media_delays = []
                 with Image.open(media_path) as image:
@@ -137,8 +141,12 @@ def load_folder_frames(folder_path: Path, frame_dir: Path, video_fps: float, fra
 
         for frame_index, frame_path in enumerate(ordered_frames):
             with Image.open(frame_path) as image:
-                canvas = Image.new("RGBA", (max_width, max_height), (0, 0, 0, 0))
-                canvas.paste(image.convert("RGBA"), (0, 0))
-                canvas.save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
+                if preserve_frame_sizes:
+                    image.convert("RGBA").save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
+                else:
+                    canvas = Image.new("RGBA", (max_width, max_height), (0, 0, 0, 0))
+                    canvas.paste(image.convert("RGBA"), (0, 0))
+                    canvas.save(frame_dir / f"frame_{frame_index:04d}.png", format="PNG")
 
-    return delays_ms, "folder media (alphabetical order)"
+    extractor_names = " and ".join(tool for tool in ("pillow", "ffmpeg") if tool in extractors)
+    return delays_ms, extractor_names

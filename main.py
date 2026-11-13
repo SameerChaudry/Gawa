@@ -1,5 +1,6 @@
-# The app is split into just main.py and qt_ui
-# main.py handles the backend while qt_ui handles the gui
+# The app is split into just main.py, qt_ui, and media_io.py
+# main.py handles the backend, qt_ui handles the gui, and
+# media_io.py handles the file/folder imports and dbus implementation
 
 from __future__ import annotations
 import subprocess
@@ -9,6 +10,7 @@ import json
 import tempfile
 import statistics
 import time
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import Any, Callable, cast
 from PIL import Image
@@ -29,12 +31,122 @@ deps = {
 
 HIDE_CMD = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
+@dataclass(frozen=True)
+class ConversionSnapshot:
+    image_paths: tuple[Path, ...]
+    des_format: str
+    quality: int
+    options: dict[str, bool | int | float | str]
+    output_dir: Path
+    video_fps: float
+    frames_fps: float
+
+class FrameCache:
+    def __init__(self) -> None:
+        self._temporary_directory = tempfile.TemporaryDirectory(prefix="gawa-cache-")
+        self.root = Path(self._temporary_directory.name)
+        self.raw_dir = self.root / "raw"
+        self.normalized_dir = self.root / "normalized"
+        self.raw_dir.mkdir()
+        self.normalized_dir.mkdir()
+        self.entries: dict[tuple[Any, ...], tuple[str, list[int], str]] = {}
+        self.normalized_entries: dict[tuple[Any, ...], tuple[tuple[Any, ...], int, set[str]]] = {}
+        self._next_input_id = 0
+
+    @staticmethod
+    def make_source_key(image_path: Path, video_fps: float, frames_fps: float) -> tuple[Any, ...] | None:
+        try:
+            input_paths = get_frame_files(image_path) if image_path.is_dir() else [image_path]
+            signatures = []
+            for path in input_paths:
+                stat = path.stat()
+                signatures.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns))
+        except OSError:
+            return None
+
+        return (str(image_path.resolve()), tuple(signatures), video_fps, frames_fps)
+
+    @staticmethod
+    def _copy_to_working(frames: list[Path], frame_dir: Path) -> bool:
+        if not frames:
+            return False
+        for index, frame_path in enumerate(frames):
+            shutil.copy2(frame_path, frame_dir / f"frame_{index:04d}.png")
+        return True
+
+    def restore_raw(self, key: tuple[Any, ...] | None, frame_dir: Path) -> tuple[list[int], str] | None:
+        if key is None or key not in self.entries:
+            return None
+        input_name, delays, extractor = self.entries[key]
+        raw_input_dir = self.raw_dir / input_name
+        frames = sorted(raw_input_dir.glob("frame_*.png"))
+        if len(frames) != len(delays) or not self._copy_to_working(frames, frame_dir):
+            self.entries.pop(key, None)
+            return None
+        return list(delays), extractor
+
+    def store_raw(self, key: tuple[Any, ...] | None, frame_dir: Path, delays: list[int], extractor: str) -> None:
+        if key is None:
+            return
+        if key in self.entries:
+            return
+        input_name = f"input-{self._next_input_id:08d}"
+        self._next_input_id += 1
+        frames = sorted(frame_dir.glob("frame_*.png"))
+        if len(frames) != len(delays):
+            return
+        raw_input_dir = self.raw_dir / input_name
+        raw_input_dir.mkdir()
+        for index, frame_path in enumerate(frames):
+            shutil.copy2(frame_path, raw_input_dir / f"frame_{index:04d}.png")
+        self.entries[key] = (input_name, list(delays), extractor)
+
+    def restore_normalized(self, key: tuple[Any, ...] | None, settings: tuple[Any, ...],
+    frame_dir: Path) -> set[str] | None:
+        if key is None or key not in self.normalized_entries:
+            return None
+        cached_settings, frame_count, tools = self.normalized_entries[key]
+        if cached_settings != settings:
+            return None
+        input_name = self.entries[key][0]
+        normalized_input_dir = self.normalized_dir / input_name
+        frames = sorted(normalized_input_dir.glob("frame_*.png"))
+        if len(frames) != frame_count:
+            self.normalized_entries.pop(key, None)
+            return None
+        for raw_frame in frame_dir.glob("frame_*.png"):
+            raw_frame.unlink()
+        if not self._copy_to_working(frames, frame_dir):
+            self.normalized_entries.pop(key, None)
+            return None
+        return set(tools)
+
+    def store_normalized(self, key: tuple[Any, ...] | None, settings: tuple[Any, ...],
+    frame_dir: Path, frame_count: int, tools: set[str]) -> None:
+        if key is None or not tools:
+            return
+        frames = sorted(frame_dir.glob("frame_*.png"))
+        if len(frames) != frame_count:
+            return
+        input_name = self.entries[key][0]
+        normalized_input_dir = self.normalized_dir / input_name
+        normalized_input_dir.mkdir(parents=True, exist_ok=True)
+        for old_frame in normalized_input_dir.glob("frame_*.png"):
+            old_frame.unlink()
+        for index, frame_path in enumerate(frames):
+            shutil.copy2(frame_path, normalized_input_dir / f"frame_{index:04d}.png")
+        self.normalized_entries[key] = (settings, frame_count, set(tools))
+
+    def close(self) -> None:
+        self._temporary_directory.cleanup()
+
 # Runs the conversion loop in a separate thread to avoid locking up the main thread
 class ConversionWorker(QThread):
     log_message = Signal(str)
 
-    def __init__(self, image_paths: list[Path], des_format: str, quality: int, options: dict[str, bool | int | str],
-        output_dir: Path, video_fps: float, frames_fps: float, parent: QObject | None = None) -> None:
+    def __init__(self, image_paths: list[Path], des_format: str, quality: int, options: dict[str, bool | int | float | str],
+        output_dir: Path, video_fps: float, frames_fps: float, parent: QObject | None = None,
+        frame_cache: FrameCache | None = None) -> None:
 
         super().__init__(parent)
         self.image_paths = image_paths
@@ -44,6 +156,7 @@ class ConversionWorker(QThread):
         self.output_dir = output_dir
         self.video_fps = video_fps
         self.frames_fps = frames_fps
+        self.frame_cache = frame_cache
         self.failures: list[str] = []
 
     def run(self) -> None:
@@ -66,20 +179,60 @@ class ConversionWorker(QThread):
                 with tempfile.TemporaryDirectory(prefix="gawa-frames-") as temp_dir:
                     frame_dir = Path(temp_dir)
                     extraction_started = time.perf_counter()
-                    if image_path.is_dir():
-                        delays, extracter = load_folder_frames(image_path, frame_dir, 
-                            self.video_fps, self.frames_fps, MainWindow.dump_frames)
+                    resize = self.options["resize_enabled"]
+                    resize_size = None
+                    if resize:
+                        resize_size = (int(self.options["resize_width"]), int(self.options["resize_height"]))
+                    fit_to_canvas = bool(self.options["fit_to_canvas"])
+                    center_frames = bool(self.options["center_frames"])
+                    resize_active = resize_size is not None and resize_size != (0, 0)
+                    source_key = FrameCache.make_source_key(image_path, self.video_fps, self.frames_fps)
+                    raw_frames = self.frame_cache.restore_raw(source_key, frame_dir) if self.frame_cache is not None else None
+                    if raw_frames is not None:
+                        delays, extracter = raw_frames
+                        extraction_seconds = time.perf_counter() - extraction_started
+                        self.log_message.emit(f"Reused raw frames for {image_path.name} in {extraction_seconds:.2f}s")
                     else:
-                        delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
-                    extraction_seconds = time.perf_counter() - extraction_started
+                        if image_path.is_dir():
+                            delays, extracter = load_folder_frames(
+                                image_path, frame_dir, self.video_fps, self.frames_fps, MainWindow.dump_frames,
+                                preserve_frame_sizes=True)
+                        else:
+                            delays, extracter = MainWindow.dump_frames(image_path, frame_dir, self.video_fps)
+                        extraction_seconds = time.perf_counter() - extraction_started
+                        if self.frame_cache is not None:
+                            self.frame_cache.store_raw(source_key, frame_dir, delays, extracter)
+                        self.log_message.emit(f"Extracted {len(delays)} raw frames using {extracter} in {extraction_seconds:.2f}s")
+
+                    normalization_key = (resize_size, fit_to_canvas, center_frames)
+                    normalization_started = time.perf_counter()
+                    normalization_tools = self.frame_cache.restore_normalized(
+                        source_key, normalization_key, frame_dir) if self.frame_cache is not None else None
+                    if normalization_tools is not None:
+                        normalization_seconds = time.perf_counter() - normalization_started
+                        self.log_message.emit(f"Reused normalized frames for {image_path.name} in {normalization_seconds:.2f}s")
+                    else:
+                        normalization_tools = MainWindow.normalize_frame_sequence(
+                            frame_dir, len(delays), resize_size, fit_to_canvas, center_frames, deps["ffmpeg"])
+                        normalization_seconds = time.perf_counter() - normalization_started
+                        if self.frame_cache is not None:
+                            self.frame_cache.store_normalized(source_key, normalization_key,
+                                frame_dir, len(delays), normalization_tools)
+                        if normalization_tools:
+                            normalization_text = " and ".join(
+                                tool.capitalize() if tool == "pillow" else "FFmpeg"
+                                for tool in ("pillow", "ffmpeg") if tool in normalization_tools)
+                            self.log_message.emit(f"Normalized frames using {normalization_text} in {normalization_seconds:.2f}s")
+
+                    delays = MainWindow.adjust_delays(delays, self.options)
 
                     if self.des_format == "gif":
-                        adjusted_delays = sum(delay < 20 for delay in delays)
-                        if adjusted_delays:
-                            delays = [20 if delay < 20 else delay for delay in delays]
-                            self.log_message.emit(f"Warning: Adjusted {adjusted_delays} frame delay(s) below 20 ms to 20 ms to avoid unintended behavior when playing back the gif")
-                    self.log_message.emit(f"Extracted {len(delays)} frames using {extracter} in {extraction_seconds:.2f}s")
-                    self.log_message.emit(f"Converting {image_path.name}")
+                        low_delays = sum(delay < 20 for delay in delays)
+                        if low_delays: self.log_message.emit(f"Warning: Found {low_delays} frame delay(s) below 20 ms. This may cause inconsistent behavior when playing back the gif")
+                    elif self.des_format != "gif":
+                        low_delays = sum(delay < 11 for delay in delays)
+                        if low_delays: self.log_message.emit(f"Warning: Found {low_delays} frame delay(s) below 11 ms. This may cause inconsistent behavior when playing back the {self.des_format}")
+                    self.log_message.emit(f"Encoding {image_path.name}")
 
                     # Encodes the selected image format using the extracted png frames
                     encoding_started = time.perf_counter()
@@ -110,6 +263,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         saved_path = Path(saved_output_dir).expanduser() if saved_output_dir else None
         self.output_dir = saved_path if saved_path is not None and saved_path.is_dir() else None
         self.worker: ConversionWorker | None = None
+        self.conversion_queue: list[ConversionSnapshot] = []
+        self._active_jobs: list[ConversionSnapshot] = []
+        self._active_job_index = 0
+        self._active_is_queue = False
+        self._active_failures: list[str] = []
+        self.frame_cache = FrameCache()
 
         if self.output_dir is not None:
             self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
@@ -121,8 +280,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         _ = self.add_files_button.clicked.connect(self.on_add_files_clicked)
         _ = self.remove_all_button.clicked.connect(self.on_remove_all_clicked)
         _ = self.make_convert_button.clicked.connect(self.on_make_convert_clicked)
+        _ = self.add_to_queue_action.triggered.connect(self.on_add_to_queue_clicked)
+        _ = self.clear_queue_action.triggered.connect(self.on_clear_queue_clicked)
         _ = self.format_dropdown.currentTextChanged.connect(self.on_format_changed)
-        _ = self.middle_bar.benchmarks_button.clicked.connect(self.on_benchmarks_clicked)
+        _ = self.sidebar.benchmarks_button.clicked.connect(self.on_benchmarks_clicked)
         _ = self.output_folder_button.clicked.connect(self.on_choose_output_folder_clicked)
 
         self.delete_shortcut = QShortcut(QKeySequence("Delete"), self)
@@ -187,9 +348,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.output_folder_button.setText(self.output_dir.name or str(self.output_dir))
         self.output_folder_button.setToolTip(str(self.output_dir))
 
-    # Rebuilds the middle bar to show different configuration options when the selected format changes
+    # Rebuilds the sidebar to show different configuration options when the selected format changes
     def on_format_changed(self, format_name: str) -> None:
-        self.middle_bar.rebuild(format_name.lower(), deps)
+        self.sidebar.rebuild(format_name.lower(), deps)
 
     def on_benchmarks_clicked(self) -> None:
         des_format = self.format_dropdown.currentText().lower()
@@ -240,7 +401,10 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
     # Calculates an fps value using a list of delays or a custom delay value
     @staticmethod
-    def get_fps(delays: list[int], options: dict[str, bool | int | str]) -> int:
+    def get_fps(delays: list[int], options: dict[str, bool | int | float | str]) -> float:
+        if options.get("delay_speed_enabled", True) and options.get("delay_speed_mode") == "Custom fps":
+            return float(options["delay_speed_value"])
+
         valid_delays = [delay for delay in delays if delay > 0]
         if not valid_delays: valid_delays = [100]
 
@@ -248,10 +412,91 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
         if delay_mode == "Average":  delay_ms = sum(valid_delays) / len(valid_delays)
         elif delay_mode == "Mode":   delay_ms = statistics.mode(valid_delays)
-        elif delay_mode == "Custom fps": return int(options["custom_fps"])
+        elif delay_mode == "Custom fps": return float(options["custom_fps"])
         else: raise ValueError(f"Unknown delay mode: {delay_mode}")
 
-        return max(1, round(1000 / max(1, int(delay_ms))))
+        return max(1.0, 1000 / max(1.0, delay_ms))
+
+    @staticmethod
+    def adjust_delays(delays: list[int], options: dict[str, bool | int | float | str]) -> list[int]:
+        if not options.get("delay_speed_enabled", True): return delays
+        value = float(options["delay_speed_value"])
+        if options["delay_speed_mode"] == "Multiplier":
+            return [max(1, round(delay * value)) for delay in delays]
+        if options["delay_speed_mode"] == "Custom fps":
+            if value <= 0: raise ValueError("Custom fps must be greater than zero")
+            return [max(1, round((index + 1) * 1000 / value) - round(index * 1000 / value))
+                for index in range(len(delays))]
+        raise ValueError(f"Unknown delay adjustment mode: {options['delay_speed_mode']}")
+
+    @staticmethod
+    def get_resize_dimensions(original_size: tuple[int, int], resize_size: tuple[int, int]) -> tuple[int, int]:
+        original_width, original_height = original_size
+        width, height = resize_size
+        if width == 0 and height == 0: return original_size
+        if width == 0: width = max(1, round(original_width * height / original_height))
+        elif height == 0: height = max(1, round(original_height * width / original_width))
+        return width, height
+
+    @staticmethod
+    def normalize_frame_sequence(frame_dir: Path, frame_count: int, resize_size: tuple[int, int] | None,
+    fit_to_canvas: bool, center_frames: bool, use_ffmpeg: bool) -> set[str]:
+        frames = [frame_dir / f"frame_{index:04d}.png" for index in range(frame_count)]
+        frame_sizes: list[tuple[int, int]] = []
+        for frame_path in frames:
+            with Image.open(frame_path) as frame:
+                frame_sizes.append(frame.size)
+
+        source_canvas = (max(width for width, _ in frame_sizes), max(height for _, height in frame_sizes))
+        output_canvas = MainWindow.get_resize_dimensions(source_canvas, resize_size) if resize_size is not None else source_canvas
+        if all(size == source_canvas for size in frame_sizes) and output_canvas == source_canvas:
+            return set()
+
+        composition_canvas = output_canvas if fit_to_canvas else source_canvas
+        filter_chain: list[str] = []
+        if fit_to_canvas:
+            filter_chain.append(f"scale={output_canvas[0]}:{output_canvas[1]}:force_original_aspect_ratio=decrease")
+
+        pad_x = "(ow-iw)/2" if center_frames else "0"
+        pad_y = "(oh-ih)/2" if center_frames else "0"
+        filter_chain.append(f"pad={composition_canvas[0]}:{composition_canvas[1]}:{pad_x}:{pad_y}:color=black@0")
+        if composition_canvas != output_canvas:
+            filter_chain.append(f"scale={output_canvas[0]}:{output_canvas[1]}")
+
+        with tempfile.TemporaryDirectory(prefix="gawa-normalized-", dir=frame_dir) as temp_name:
+            normalized_dir = Path(temp_name)
+            if use_ffmpeg:
+                try:
+                    subprocess.run(["ffmpeg", "-v", "error", "-y", "-start_number", "0", "-i",
+                        str(frame_dir / "frame_%04d.png"), "-vf", ",".join(filter_chain), "-start_number", "0",
+                        str(normalized_dir / "frame_%04d.png")], check=True, capture_output=True, creationflags=HIDE_CMD)
+                    normalized_frames = sorted(normalized_dir.glob("frame_*.png"))
+                    if len(normalized_frames) != frame_count:
+                        raise RuntimeError(f"Expected {frame_count} normalized frames, got {len(normalized_frames)}")
+                    for index, frame_path in enumerate(normalized_frames):
+                        shutil.move(str(frame_path), frames[index])
+                    return {"ffmpeg"}
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    pass
+
+            for index, frame_path in enumerate(frames):
+                with Image.open(frame_path) as image:
+                    frame = image.convert("RGBA")
+                    if fit_to_canvas:
+                        scale = min(output_canvas[0] / frame.width, output_canvas[1] / frame.height)
+                        fitted_size = (max(1, round(frame.width * scale)), max(1, round(frame.height * scale)))
+                        if fitted_size != frame.size:
+                            frame = frame.resize(fitted_size, Image.Resampling.LANCZOS)
+
+                    canvas = Image.new("RGBA", composition_canvas, (0, 0, 0, 0))
+                    x = (composition_canvas[0] - frame.width) // 2 if center_frames else 0
+                    y = (composition_canvas[1] - frame.height) // 2 if center_frames else 0
+                    canvas.paste(frame, (x, y))
+                    if composition_canvas != output_canvas:
+                        canvas = canvas.resize(output_canvas, Image.Resampling.LANCZOS)
+                    canvas.save(frame_path, format="PNG")
+
+        return {"pillow"}
 
     # Extracts animation frames as individual pngs
     @staticmethod
@@ -308,8 +553,9 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
         # FFmpeg 9 seemed to only write a single frame for every tested avif for some reason 
         if deps["ffmpeg"] and image_path.suffix.lower() != ".avif":
             try:
-                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-fps_mode", "passthrough", 
-                    str(frame_dir / "frame_%04d.png")], check=True, capture_output=True, creationflags=HIDE_CMD)
+                cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(image_path), "-fps_mode", "passthrough",
+                    str(frame_dir / "frame_%04d.png")]
+                subprocess.run(cmd, check=True, capture_output=True, creationflags=HIDE_CMD)
                 extracted = sorted(frame_dir.glob("frame_*.png"))
                 if len(extracted) == expected_frames:
                     for index, frame in enumerate(extracted):
@@ -341,7 +587,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
 
     # Encodes animations using a directory of frames and list of delays
     @staticmethod
-    def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path, options: dict[str, bool | int | str],
+    def assemble_frames(des_format: str, quality: int, delays: list[int], out_path: Path, options: dict[str, bool | int | float | str],
     frame_dir: Path, log_message: Callable[[str], None] | None = None) -> str:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         frames = [frame_dir / f"frame_{i:04d}.png" for i in range(len(delays))]
@@ -444,32 +690,91 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
         reserved.add(candidate)
         return candidate
 
-    def on_make_convert_clicked(self) -> None:
+    def _capture_conversion_snapshot(self) -> ConversionSnapshot | None:
         image_paths = self.image_grid.get_file_paths()
-        if not image_paths: return
+        if not image_paths: return None
 
         if self.output_dir is None:
             self.on_choose_output_folder_clicked()
-            if self.output_dir is None: return
+            if self.output_dir is None: return None
 
-        des_format = self.format_dropdown.currentText().lower()
-        quality = self.quality_spinbox.value()
-        options = self.middle_bar.snapshot()
-        video_fps = self.middle_bar.video_fps_spinbox.value()
-        frames_fps = self.middle_bar.frames_fps_spinbox.value()
+        return ConversionSnapshot(
+            tuple(image_paths),
+            self.format_dropdown.currentText().lower(),
+            self.quality_spinbox.value(),
+            self.sidebar.snapshot(),
+            self.output_dir,
+            self.sidebar.video_fps_spinbox.value(),
+            self.sidebar.frames_fps_spinbox.value(),
+        )
+
+    def on_add_to_queue_clicked(self) -> None:
+        snapshot = self._capture_conversion_snapshot()
+        if snapshot is None: return
+        self.conversion_queue.append(snapshot)
+        self.make_convert_button.setText(f"Convert ({len(self.conversion_queue)})")
+        self.log_message.emit(
+            f"Added queue operation {len(self.conversion_queue)}: {snapshot.des_format.upper()} "
+            f"({len(snapshot.image_paths)} input(s))"
+        )
+
+    def on_clear_queue_clicked(self) -> None:
+        self.conversion_queue.clear()
+        self.make_convert_button.setText("Convert (0)")
+        self.log_message.emit("Queue cleared.")
+
+    def on_make_convert_clicked(self) -> None:
+        queued = bool(self.conversion_queue)
+        jobs = list(self.conversion_queue) if queued else []
+        if not queued:
+            snapshot = self._capture_conversion_snapshot()
+            if snapshot is None: return
+            jobs.append(snapshot)
+
+        self._active_jobs = jobs
+        self._active_job_index = 0
+        self._active_is_queue = queued
+        self._active_failures = []
         self.make_convert_button.setEnabled(False)
+        self._start_next_conversion_job()
 
-        self.worker = ConversionWorker(image_paths, des_format, quality, options, self.output_dir, video_fps, frames_fps, self)
+    def _start_next_conversion_job(self) -> None:
+        snapshot = self._active_jobs[self._active_job_index]
+        if self._active_is_queue:
+            self.log_message.emit(
+                f"Queue operation {self._active_job_index + 1}/{len(self._active_jobs)}: "
+                f"{snapshot.des_format.upper()} ({len(snapshot.image_paths)} input(s))"
+            )
+
+        self.worker = ConversionWorker(
+            list(snapshot.image_paths), snapshot.des_format, snapshot.quality, snapshot.options,
+            snapshot.output_dir, snapshot.video_fps, snapshot.frames_fps, self, self.frame_cache,
+        )
         _ = self.worker.log_message.connect(self.log_output.appendPlainText)
         _ = self.worker.finished.connect(self.on_conversion_finished)
         self.worker.start()
 
     def on_conversion_finished(self) -> None:
         worker = self.worker
-        failures = worker.failures if worker is not None else []
-        self.make_convert_button.setEnabled(True)
+        if worker is not None:
+            for failure in worker.failures:
+                if self._active_is_queue:
+                    failure = f"Queue operation {self._active_job_index + 1}: {failure}"
+                self._active_failures.append(failure)
         self.worker = None
         if worker is not None: worker.deleteLater()
+
+        self._active_job_index += 1
+        if self._active_job_index < len(self._active_jobs):
+            self._start_next_conversion_job()
+            return
+
+        failures = self._active_failures
+        self._active_jobs = []
+        self._active_job_index = 0
+        self._active_is_queue = False
+        self._active_failures = []
+        self.make_convert_button.setEnabled(True)
         if failures:
             QMessageBox.warning(self, "Some conversions failed", "The following files could not be converted:\n\n" + "\n".join(failures),)
 
@@ -477,6 +782,7 @@ Note: The ffmpeg method uses libsvtav1 for significantly better efficiency compa
         if self.worker is not None and self.worker.isRunning():
             self.worker.requestInterruption()
             self.worker.wait()
+        self.frame_cache.close()
         super().closeEvent(event)
 
 def main(argv: list[str] | None = None) -> None:

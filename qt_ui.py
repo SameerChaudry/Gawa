@@ -10,24 +10,12 @@ from typing import override
 from PIL import Image
 from media_io import FRAME_SUFFIXES
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
+from PySide6.QtGui import QAction, QImage, QMouseEvent, QPixmap, QResizeEvent, QFontDatabase
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QLayout,
-    QMainWindow,
-    QPushButton,
-    QPlainTextEdit,
-    QScrollArea,
-    QSplitter,
-    QSpinBox,
-    QStyle,
-    QVBoxLayout,
-    QWidget,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QGridLayout,
+    QHBoxLayout, QLabel, QLayout, QMainWindow,
+    QPushButton, QPlainTextEdit, QScrollArea, QSplitter,
+    QSpinBox, QStyle, QToolButton, QMenu, QVBoxLayout, QWidget,
 )
 
 THUMBNAIL_SIZE = 120
@@ -271,21 +259,98 @@ class ResizingScrollArea(QScrollArea):
             scrollbar_width = self.verticalScrollBar().sizeHint().width()
             grid.reflow_for_width(self.viewport().width() - scrollbar_width)
 
-# The row of format-specific conversion options between the top bar and the image grid
-# that builds new widgets based on the input and outputs formats for conversion
-# Also includes some right-aligned widgets like the persistent Benchmarks button
-class MiddleBarWidget(QWidget):
+# The sidebar with input, output, and other settings
+class SidebarWidget(QFrame):
     def __init__(
         self, quality_spinbox: QSpinBox, speed_label: QLabel, speed_spinbox: QSpinBox,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._row_layout: QHBoxLayout = QHBoxLayout(self)
-        self._row_layout.setContentsMargins(0, 0, 0, 0)
-        self._layout: QHBoxLayout = QHBoxLayout()
+        self.setObjectName("sidebar_widget")
+        self.setFrameShape(QFrame.Shape.Box)
+        self.setLineWidth(1)
+        self.setStyleSheet("QFrame#sidebar_widget { border: 1px solid black; }")
+        self.setMinimumWidth(340)
+        sidebar_layout = QVBoxLayout(self)
+        sidebar_layout.setContentsMargins(8, 8, 8, 8)
+
+        input_heading = QLabel("Import settings")
+        input_heading.setStyleSheet("font-weight: bold;")
+        sidebar_layout.addWidget(input_heading)
+        resize_layout = QHBoxLayout()
+        sidebar_layout.addLayout(resize_layout)
+        fps_layout = QHBoxLayout()
+        sidebar_layout.addLayout(fps_layout)
+        self.resize_enabled: QCheckBox = QCheckBox("Resize:")
+        self.resize_enabled.setToolTip("Set the output canvas size. A dimension of 0 preserves the canvas aspect ratio; 0 for both keeps its current size.")
+        self.resize_width_label: QLabel = QLabel("Width:")
+        self.resize_width_spinbox: QSpinBox = QSpinBox()
+        self.resize_width_spinbox.setRange(0, 16384)
+        self.resize_width_spinbox.setValue(0)
+        self.resize_width_spinbox.setToolTip("Output canvas width in pixels. Set to 0 to derive it from Height.")
+        self.resize_height_label: QLabel = QLabel("Height:")
+        self.resize_height_spinbox: QSpinBox = QSpinBox()
+        self.resize_height_spinbox.setRange(0, 16384)
+        self.resize_height_spinbox.setValue(0)
+        self.resize_height_spinbox.setToolTip("Output canvas height in pixels. Set to 0 to derive it from Width.")
+        for widget in (self.resize_width_label, self.resize_width_spinbox,
+            self.resize_height_label, self.resize_height_spinbox):
+            widget.setEnabled(False)
+            resize_layout.addWidget(widget)
+        resize_layout.insertWidget(0, self.resize_enabled)
+        _ = self.resize_enabled.toggled.connect(self.resize_width_label.setEnabled)
+        _ = self.resize_enabled.toggled.connect(self.resize_width_spinbox.setEnabled)
+        _ = self.resize_enabled.toggled.connect(self.resize_height_label.setEnabled)
+        _ = self.resize_enabled.toggled.connect(self.resize_height_spinbox.setEnabled)
+
+        output_heading = QLabel("Encoder settings")
+        output_heading.setStyleSheet("font-weight: bold;")
+        sidebar_layout.addWidget(output_heading)
+        self._layout: QVBoxLayout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._row_layout.addLayout(self._layout)
-        self._row_layout.addStretch()
+        sidebar_layout.addLayout(self._layout)
+
+        other_heading = QLabel("Other settings")
+        other_heading.setStyleSheet("font-weight: bold;")
+        sidebar_layout.addWidget(other_heading)
+        self.fit_to_canvas: QCheckBox = QCheckBox("Fit to canvas boundary")
+        self.fit_to_canvas.setToolTip("Scale each frame up or down, preserving aspect ratio, to fit inside the output canvas.")
+        self.center_frames: QCheckBox = QCheckBox("Center frames")
+        self.center_frames.setToolTip("Center each frame on the output canvas; unused canvas area is transparent.")
+        fit_layout = QHBoxLayout()
+        fit_layout.addWidget(self.fit_to_canvas)
+        fit_layout.addWidget(self.center_frames)
+        fit_layout.addStretch()
+        sidebar_layout.addLayout(fit_layout)
+        delay_speed_layout = QHBoxLayout()
+        sidebar_layout.addLayout(delay_speed_layout)
+        self.delay_speed_enabled: QCheckBox = QCheckBox("Speed:")
+        self.delay_speed_enabled.setChecked(False)
+        self.delay_speed_enabled.setToolTip("Enable changing frame delays for this conversion.")
+        self.delay_speed_mode: QComboBox = QComboBox()
+        self.delay_speed_mode.addItems(["Multiplier", "Custom fps"])
+        self.delay_speed_mode.setCurrentText("Multiplier")
+        self.delay_speed_mode.setToolTip("Multiply existing delays or replace them with a constant frame rate.")
+        self.delay_speed_value: QDoubleSpinBox = QDoubleSpinBox()
+        self.delay_speed_value.setDecimals(2)
+        self.delay_speed_value.setSingleStep(0.1)
+        self.delay_speed_value.setRange(0.01, 10)
+        self.delay_speed_value.setValue(1)
+        self.delay_speed_value.setToolTip("Multiplier applied to each existing frame delay")
+        delay_speed_layout.addWidget(self.delay_speed_enabled)
+        delay_speed_layout.addWidget(self.delay_speed_mode)
+        delay_speed_layout.addWidget(self.delay_speed_value)
+        delay_speed_layout.addStretch()
+        _ = self.delay_speed_enabled.toggled.connect(self.delay_speed_mode.setVisible)
+        _ = self.delay_speed_enabled.toggled.connect(self.delay_speed_value.setVisible)
+        self.delay_speed_mode.setVisible(self.delay_speed_enabled.isChecked())
+        self.delay_speed_value.setVisible(self.delay_speed_enabled.isChecked())
+        other_layout = QHBoxLayout()
+        sidebar_layout.addLayout(other_layout)
+        self.benchmarks_button: QPushButton = QPushButton("Benchmarks")
+        other_layout.addWidget(self.benchmarks_button)
+        other_layout.addStretch()
+        sidebar_layout.addStretch()
 
         self.frames_fps_label: QLabel = QLabel("Frames FPS:")
         self.frames_fps_spinbox: QDoubleSpinBox = QDoubleSpinBox()
@@ -294,11 +359,11 @@ class MiddleBarWidget(QWidget):
         self.frames_fps_spinbox.setSingleStep(1)
         self.frames_fps_spinbox.setValue(10)
         self.frames_fps_spinbox.setToolTip("Frame rate used for static images in an imported frame folder")
-        self.frames_fps_label.hide()
-        self.frames_fps_spinbox.hide()
+        self.frames_fps_label.setEnabled(False)
+        self.frames_fps_spinbox.setEnabled(False)
 
-        self._row_layout.addWidget(self.frames_fps_label)
-        self._row_layout.addWidget(self.frames_fps_spinbox)
+        fps_layout.addWidget(self.frames_fps_label)
+        fps_layout.addWidget(self.frames_fps_spinbox)
 
         self.video_fps_label: QLabel = QLabel("Video FPS:")
         self.video_fps_spinbox: QDoubleSpinBox = QDoubleSpinBox()
@@ -307,33 +372,36 @@ class MiddleBarWidget(QWidget):
         self.video_fps_spinbox.setSingleStep(1)
         self.video_fps_spinbox.setValue(0)
         self.video_fps_spinbox.setToolTip("Frame rate used when decoding video inputs. 0 uses the video's source frame rate. Does not affect image inputs")
-        self.video_fps_label.hide()
-        self.video_fps_spinbox.hide()
+        self.video_fps_label.setEnabled(False)
+        self.video_fps_spinbox.setEnabled(False)
 
-        self._row_layout.addWidget(self.video_fps_label)
-        self._row_layout.addWidget(self.video_fps_spinbox)
-        self.benchmarks_button: QPushButton = QPushButton("Benchmarks")
-        self._row_layout.addWidget(self.benchmarks_button)
+        fps_layout.addWidget(self.video_fps_label)
+        fps_layout.addWidget(self.video_fps_spinbox)
+        fps_layout.addStretch()
 
         self._quality_spinbox: QSpinBox = quality_spinbox
         self._speed_label: QLabel = speed_label
         self._speed_spinbox: QSpinBox = speed_spinbox
         self._saved_quality_value: int = quality_spinbox.value()
         self._current_format: str | None = None
+        self._gif_toggle_row: QWidget | None = None
+        self._has_video = False
         self._has_static_frames = False
         self._frame_rate_conflict = False
         self.options: dict[str, QWidget] = {}
         _ = quality_spinbox.valueChanged.connect(self._remember_quality_value)
+        _ = self.delay_speed_mode.currentTextChanged.connect(self._update_delay_speed_range)
 
-    # Make "Frames FPS" visible if "Framerate calculation" isn't visible and visa versa
-    def update_frames_fps_visibility(self, has_static_frames: bool | None = None,
+    # Enable FPS controls when their inputs and encoder support them
+    def update_fps_controls(self, has_video: bool | None = None, has_static_frames: bool | None = None,
     framerate_conflict: bool | None = None) -> None:
+        if has_video is not None: self._has_video = has_video
         if has_static_frames is not None:  self._has_static_frames = has_static_frames
         if framerate_conflict is not None: self._frame_rate_conflict = framerate_conflict
-        visible = self._has_static_frames and not self._frame_rate_conflict
-        self.frames_fps_label.setVisible(visible)
-        self.frames_fps_spinbox.setVisible(visible)
-        self.frames_fps_spinbox.setEnabled(visible)
+        self.frames_fps_label.setEnabled(self._has_static_frames and not self._frame_rate_conflict)
+        self.frames_fps_spinbox.setEnabled(self._has_static_frames and not self._frame_rate_conflict)
+        self.video_fps_label.setEnabled(self._has_video)
+        self.video_fps_spinbox.setEnabled(self._has_video)
 
     # Restore the previously selected quality when switching away from apng since apng is lossless
     def _remember_quality_value(self, value: int) -> None:
@@ -348,17 +416,43 @@ class MiddleBarWidget(QWidget):
         self._speed_spinbox.setToolTip(tooltip)
 
     # Returns the current value of a widget
-    def value(self, name: str) -> bool | int | str:
+    def value(self, name: str) -> bool | int | float | str:
         widget = self.options.get(name)
         if widget is None: raise KeyError(f"Option {name!r} is not available for this format")
         if isinstance(widget, QCheckBox): return widget.isChecked()
+        if isinstance(widget, QDoubleSpinBox): return widget.value()
         if isinstance(widget, QSpinBox):  return widget.value()
         if isinstance(widget, QComboBox): return widget.currentText()
         raise TypeError(f"Unsupported option widget for {name!r}: {type(widget).__name__}")
 
     # Copy current option values so conversion workers don't need to read Qt widgets
-    def snapshot(self) -> dict[str, bool | int | str]:
+    def snapshot(self) -> dict[str, bool | int | float | str]:
         return {name: self.value(name) for name in self.options}
+
+    def _update_delay_speed_range(self, _mode: str | None = None, reset_value: bool = True) -> None:
+        if self.delay_speed_mode.currentText() == "Multiplier":
+            self.delay_speed_value.setRange(0.01, 10)
+            if reset_value: self.delay_speed_value.setValue(1)
+            self.delay_speed_value.setToolTip("Multiplier applied to each existing frame delay")
+            return
+
+        fmt = self._current_format or "gif"
+        max_fps = MAX_FPS.get(fmt, 90)
+        self.delay_speed_value.setRange(0.01, max_fps)
+        if reset_value: self.delay_speed_value.setValue(min(20, max_fps))
+        self.delay_speed_value.setToolTip(
+            f"Frame rate used to set frame delays. Maximum {max_fps} fps for {fmt.upper()}"
+        )
+
+    def _add_option_row(self, *widgets: QWidget) -> QWidget:
+        row = QWidget(self)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        for widget in widgets:
+            layout.addWidget(widget)
+        layout.addStretch()
+        self._layout.addWidget(row)
+        return row
 
     # Clear and rebuild the row based on the output format
     def rebuild(self, fmt: str, deps: dict[str, bool]) -> None:
@@ -367,13 +461,15 @@ class MiddleBarWidget(QWidget):
 
         self._current_format = fmt
         max_fps = MAX_FPS.get(fmt, 90)
+        self._update_delay_speed_range(reset_value=False)
         self.frames_fps_spinbox.setMaximum(max_fps)
         self.frames_fps_spinbox.setToolTip(f"Frame rate used for static images in an imported folder. Maximum {max_fps} fps for {fmt.upper()})")
         self.video_fps_spinbox.setMaximum(max_fps)
         self.video_fps_spinbox.setToolTip(f"Frame rate used when decoding video inputs. 0 uses the video's source frame rate. Maximum {max_fps} fps for {fmt.upper()}. Does not affect image inputs")
         clear_layout(self._layout)
+        self._gif_toggle_row = None
         self.options = {}
-        self.update_frames_fps_visibility(framerate_conflict=False)
+        self.update_fps_controls(framerate_conflict=False)
         self._quality_spinbox.setEnabled(True)
         self._quality_spinbox.setToolTip("")
         self._speed_label.setEnabled(False)
@@ -384,6 +480,15 @@ class MiddleBarWidget(QWidget):
         elif fmt == "apng": self._build_apng(deps)
         elif fmt == "webp": self._build_webp(deps)
         elif fmt == "avif": self._build_avif(deps)
+
+        self.options["delay_speed_mode"] = self.delay_speed_mode
+        self.options["delay_speed_value"] = self.delay_speed_value
+        self.options["delay_speed_enabled"] = self.delay_speed_enabled
+        self.options["resize_enabled"] = self.resize_enabled
+        self.options["resize_width"] = self.resize_width_spinbox
+        self.options["resize_height"] = self.resize_height_spinbox
+        self.options["fit_to_canvas"] = self.fit_to_canvas
+        self.options["center_frames"] = self.center_frames
 
         self._layout.addStretch()
 
@@ -403,14 +508,23 @@ class MiddleBarWidget(QWidget):
         combo = QComboBox()
         combo.addItems(["Mode", "Average", "Custom fps"])
         combo.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom fps: Uses a custom frame rate")
-        spin = QSpinBox()
-        spin.setRange(1, MAX_FPS["gif"])
+        spin = QDoubleSpinBox()
+        spin.setRange(0.01, MAX_FPS["gif"])
+        spin.setDecimals(2)
+        spin.setSingleStep(0.1)
         spin.setValue(20)
         spin.setToolTip("Maximum fps for gif is 50. Higher values don't play consistently across most browsers/image viewers")
         self._speed_spinbox.setToolTip("Speed is unavailable for GIF")
 
-        for w in (gifski, use_ffmpeg, dither, gifski_speed_label, gifski_speed, delay_label, combo, spin):
-            self._layout.addWidget(w)
+        toggle_row = QWidget(self)
+        toggle_layout = QHBoxLayout(toggle_row)
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        for checkbox in (gifski, use_ffmpeg, dither):
+            toggle_layout.addWidget(checkbox)
+        self._layout.addWidget(toggle_row)
+        self._gif_toggle_row = toggle_row
+        delay_row = self._add_option_row(delay_label, combo, spin)
+        gifski_speed_row = self._add_option_row(gifski_speed_label, gifski_speed)
 
         self.options["use_gifski"] = gifski
         self.options["use_ffmpeg"] = use_ffmpeg
@@ -426,13 +540,12 @@ class MiddleBarWidget(QWidget):
             gifski_available = deps["gifski"]
             ffmpeg_available = deps["ffmpeg"]
             ffmpeg_active = use_ffmpeg.isChecked() and ffmpeg_available
-            if ffmpeg_active: self.update_frames_fps_visibility(framerate_conflict=True)
+            if ffmpeg_active: self.update_fps_controls(framerate_conflict=True)
 
             gifski.setEnabled(gifski_available)
             use_ffmpeg.setEnabled(ffmpeg_available)
             dither.setVisible(use_ffmpeg.isChecked() and ffmpeg_available)
-            gifski_speed_label.setVisible(gifski.isChecked() and gifski_available)
-            gifski_speed.setVisible(gifski.isChecked() and gifski_available)
+            gifski_speed_row.setVisible(gifski.isChecked() and gifski_available)
 
             if not gifski_available: gifski.setToolTip("Unavailable: gifski isn't installed")
             else: gifski.setToolTip("Most efficient gif encoder but doesn't support variable frame delay and local color tables")
@@ -445,9 +558,7 @@ class MiddleBarWidget(QWidget):
                 use_ffmpeg.setEnabled(False)
                 self._quality_spinbox.setEnabled(True)
                 self._quality_spinbox.setToolTip("Gifski quality (higher is better)")
-                dither.setVisible(False)
-                delay_label.setVisible(True)
-                combo.setVisible(True)
+                delay_row.setVisible(True)
                 spin.setVisible(combo.currentText() == "Custom fps")
 
             elif use_ffmpeg.isChecked() and ffmpeg_available:
@@ -455,9 +566,7 @@ class MiddleBarWidget(QWidget):
                 gifski.setEnabled(False)
                 self._quality_spinbox.setEnabled(False)
                 self._quality_spinbox.setToolTip("FFmpeg GIF encoding does not use quality")
-                dither.setVisible(True)
-                delay_label.setVisible(True)
-                combo.setVisible(True)
+                delay_row.setVisible(True)
                 spin.setVisible(combo.currentText() == "Custom fps")
 
             else:
@@ -465,13 +574,10 @@ class MiddleBarWidget(QWidget):
                 if not ffmpeg_available: use_ffmpeg.setEnabled(False)
                 self._quality_spinbox.setEnabled(False)
                 self._quality_spinbox.setToolTip("Pillow and ffmpeg GIF encoding do not use quality. Use Gifski to adjust GIF quality")
-                dither.setVisible(False)
-                delay_label.setVisible(False)
-                combo.setVisible(False)
-                spin.setVisible(False)
+                delay_row.setVisible(False)
 
             if not ffmpeg_active:
-                self.update_frames_fps_visibility(framerate_conflict=False)
+                self.update_fps_controls(framerate_conflict=False)
 
         _ = gifski.toggled.connect(update_constraints)
         _ = use_ffmpeg.toggled.connect(update_constraints)
@@ -510,10 +616,9 @@ class MiddleBarWidget(QWidget):
     def _build_webp(self, deps: dict[str, bool]) -> None:
         exact = QCheckBox("Use exact")
         exact.setToolTip("Preserve RGB values in fully transparent pixels")
-        self._layout.addWidget(exact)
         use_mixed = QCheckBox("Use mixed mode")
         use_mixed.setToolTip("Let pillow choose lossy or lossless compression per frame (slow)")
-        self._layout.addWidget(use_mixed)
+        self._add_option_row(exact, use_mixed)
         self.options["exact"] = exact
         self.options["use_mixed"] = use_mixed
         self.options["speed"] = self._speed_spinbox
@@ -540,13 +645,16 @@ class MiddleBarWidget(QWidget):
         delay_mode = QComboBox()
         delay_mode.addItems(["Mode", "Average", "Custom fps"])
         delay_mode.setToolTip("Mode: Uses the most common frame delay\nAverage: Uses the average frame delay\nCustom fps: Uses a custom frame rate")
-        custom_fps = QSpinBox()
-        custom_fps.setRange(1, MAX_FPS["avif"])
+        custom_fps = QDoubleSpinBox()
+        custom_fps.setRange(0.01, MAX_FPS["avif"])
+        custom_fps.setDecimals(2)
+        custom_fps.setSingleStep(0.1)
         custom_fps.setValue(20)
         custom_fps.setToolTip("Maximum fps for avif is 90. Higher values don't play consistently across most browsers/image viewers")
 
-        for w in (subsampling_label, subsampling, use_ffmpeg, crf_label, crf, delay_label, delay_mode, custom_fps):
-            self._layout.addWidget(w)
+        subsampling_row = self._add_option_row(subsampling_label, subsampling)
+        ffmpeg_row = self._add_option_row(use_ffmpeg, crf_label, crf)
+        delay_row = self._add_option_row(delay_label, delay_mode, custom_fps)
 
         self.options["subsampling"] = subsampling
         self.options["speed"] = self._speed_spinbox
@@ -563,7 +671,7 @@ class MiddleBarWidget(QWidget):
 
         def update_constraints() -> None:
             ffmpeg_active = use_ffmpeg.isChecked() and ffmpeg_available
-            if ffmpeg_active: self.update_frames_fps_visibility(framerate_conflict=True)
+            if ffmpeg_active: self.update_fps_controls(framerate_conflict=True)
 
             current_choice = subsampling.currentText()
             subsampling.clear()
@@ -580,8 +688,7 @@ class MiddleBarWidget(QWidget):
 
             crf_label.setVisible(ffmpeg_active)
             crf.setVisible(ffmpeg_active)
-            delay_label.setVisible(ffmpeg_active)
-            delay_mode.setVisible(ffmpeg_active)
+            delay_row.setVisible(ffmpeg_active)
             custom_fps.setVisible(ffmpeg_active and delay_mode.currentText() == "Custom fps")
 
             if ffmpeg_active:
@@ -595,7 +702,7 @@ class MiddleBarWidget(QWidget):
             self._quality_spinbox.setToolTip("100 quality is lossy since lossless isn't supported by Pillow"
                 if not ffmpeg_active else "Quality is set via Crf when using ffmpeg.")
             if not ffmpeg_active:
-                self.update_frames_fps_visibility(framerate_conflict=False)
+                self.update_fps_controls(framerate_conflict=False)
 
         _ = use_ffmpeg.toggled.connect(update_constraints)
         _ = delay_mode.currentTextChanged.connect(update_constraints)
@@ -654,20 +761,29 @@ class Ui_MainWindow:
         top_bar.addWidget(self.output_folder_button)
         top_bar.addSpacing(5)
 
-        self.make_convert_button: QPushButton = QPushButton("Convert")  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.make_convert_button: QToolButton = QToolButton()  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.make_convert_button.setText("Convert (0)")
+        self.make_convert_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.convert_menu: QMenu = QMenu(self.make_convert_button)  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.add_to_queue_action: QAction = self.convert_menu.addAction("Add to queue")  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.clear_queue_action: QAction = self.convert_menu.addAction("Clear queue")  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.make_convert_button.setMenu(self.convert_menu)
         top_bar.addWidget(self.make_convert_button)
 
         root_layout.addLayout(top_bar)
 
-        # ---------- middle bar (format-specific conversion options) ----------
-        self.middle_bar: MiddleBarWidget = MiddleBarWidget(self.quality_spinbox, self.speed_label, self.speed_spinbox)  # pyright: ignore[reportUninitializedInstanceVariable]
-        root_layout.addWidget(self.middle_bar)
+        # ---------- sidebar (input, output, and other settings) ----------
+        self.sidebar: SidebarWidget = SidebarWidget(
+            self.quality_spinbox, self.speed_label, self.speed_spinbox
+        )  # pyright: ignore[reportUninitializedInstanceVariable]
 
         # ---------- scrollable image grid ----------
         self.image_grid: ImageGridWidget = ImageGridWidget()  # pyright: ignore[reportUninitializedInstanceVariable]
         _ = self.image_grid.contents_changed.connect(self.update_video_fps_visibility)
 
         scroll_area = ResizingScrollArea()
+        scroll_area.setObjectName("grid_area")
+        scroll_area.setStyleSheet("QScrollArea#grid_area { border: 1px solid black; }")
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(self.image_grid)
 
@@ -688,7 +804,19 @@ class Ui_MainWindow:
         self.content_splitter.setStretchFactor(1, 0)
         self.content_splitter.setSizes([400, 120])
 
-        root_layout.addWidget(self.content_splitter, 1)
+        self.main_splitter: QSplitter = QSplitter(Qt.Orientation.Horizontal)  # pyright: ignore[reportUninitializedInstanceVariable]
+        self.main_splitter.setChildrenCollapsible(True)
+        self.main_splitter.setHandleWidth(6)
+        self.main_splitter.addWidget(self.content_splitter)
+        self.main_splitter.addWidget(self.sidebar)
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, True)
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        sidebar_width = self.sidebar.sizeHint().width()
+        self.main_splitter.setSizes([MainWindow.width() - sidebar_width, sidebar_width])
+
+        root_layout.addWidget(self.main_splitter, 1)
 
     def set_video_suffixes(self, suffixes: set[str]) -> None:
         self.image_grid.set_video_suffixes(suffixes)
@@ -696,8 +824,7 @@ class Ui_MainWindow:
     # Show "Video FPS" if any video inputs are present and "Frames FPS" if any static frames are present
     def update_video_fps_visibility(self) -> None:
         has_video = self.image_grid.has_video_inputs()
-        self.middle_bar.video_fps_label.setVisible(has_video)
-        self.middle_bar.video_fps_spinbox.setVisible(has_video)
+        self.sidebar.update_fps_controls(has_video=has_video)
         has_static_frames = False
         for folder_path in self.image_grid.get_file_paths():
             if not folder_path.is_dir(): continue
@@ -714,4 +841,4 @@ class Ui_MainWindow:
                     except OSError: continue
                 if has_static_frames: break
             except OSError: continue
-        self.middle_bar.update_frames_fps_visibility(has_static_frames=has_static_frames)
+        self.sidebar.update_fps_controls(has_static_frames=has_static_frames)
