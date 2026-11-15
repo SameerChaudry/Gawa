@@ -22,7 +22,7 @@ def main() -> int:
         print("""WARNING: This does not appear to be a virtual-environment Python. Run this script with your project's venv interpreter
             so Nuitka and the application dependencies come from the expected environment""",file=sys.stderr)
 
-    args = [python, "-m", "nuitka", "--onefile", "--enable-plugin=pyside6", f"--include-data-files={ROOT / 'gawa.svg'}=gawa.svg",
+    args = [python, "-m", "nuitka", "--onefile", "--enable-plugin=pyside6", f"--include-data-files={ROOT / 'gawa' / 'gawa.svg'}=gawa/gawa.svg",
         "--output-dir=dist/onefile", "--output-filename=Gawa"]
     if IS_WINDOWS: args += WINDOWS_ARGS
     if os.environ.get("CI"): args.append("--assume-yes-for-downloads")

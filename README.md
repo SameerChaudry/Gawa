@@ -13,6 +13,14 @@ I am unfamiliar with pyside6 and dbus so parts of the Qt and dbus code is writte
 - Uses ffmpeg for frame extraction and allows using img2webp, apngasm, or ffmpeg for better efficiency for certain formats if available in PATH
 - An image grid to preview your input files and an in-app log to track progress and report errors
 
+## Usage
+Run directly from source with `python main.py`, use a complied binary from [Releases](https://github.com/SameerChaudry/Gawa/releases), or install an isolated `gawa` launcher with [uv](https://docs.astral.sh/uv/) or pipx:
+
+```
+uv tool install git+https://github.com/SameerChaudry/Gawa
+pipx install git+https://github.com/SameerChaudry/Gawa
+```
+
 ## Building
 Only Nuitka is needed for compiling but using ccache, ordered-set, and zstandard is recommended for faster compile times and significantly smaller executable. Nuitka, ordered-set, and zstandard are pip packages while ccache is a native tool
 

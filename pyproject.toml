@@ -1,20 +1,36 @@
+# Build metadata is only needed for installable copies (uv tool, pipx, AUR).
+# Running main.py or the compiled binary does not use this file.
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "Gawa"
-version = "0.9.0"
+version = "2.0.0"
 description = "Cross-platform GUI for converting to animated GIF, WebP, AVIF, and APNG"
 readme = "README.md"
 license = "Unlicense"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "SameerChaudry" }
 ]
 dependencies = [
-    "PySide6>=6.8.0",
-    "Pillow>=11.3.0",
+    # Only Essentials is used; the PySide6 meta-package also pulls Addons, WebEngine, and PDF
+    "PySide6-Essentials>=6.8.0",
+    "Pillow>=12.3.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/SameerChaudry/Gawa"
 
-[project.scripts]
-gawa = "main:main"
+# Installs a "gawa" launcher. gui-scripts uses pythonw on Windows, so no console window appears.
+[project.gui-scripts]
+gawa = "gawa.app:main"
+
+# Explicit package list avoids setuptools trying to auto-discover unrelated directories like ignore/
+[tool.setuptools]
+packages = ["gawa"]
+
+# gawa.svg is loaded at runtime by gawa/app.py
+[tool.setuptools.package-data]
+gawa = ["gawa.svg"]
