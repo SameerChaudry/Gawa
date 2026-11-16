@@ -1,8 +1,6 @@
-nuitka==4.3.1
-ordered-set>=4.1.0
-pillow>=12.3.0
-pyside6==6.11.2
-pyside6-addons==6.11.2
-pyside6-essentials==6.11.2
-shiboken6==6.11.2
+nuitka>=4.3.1,<4.3.6
+ordered-set==4.1.0
+pillow>=12.3.0,<13.0.1
+pyside6-essentials>=6.11.2,<6.12.1
+shiboken6>=6.11.2,<6.12.1
 zstandard==0.25.0

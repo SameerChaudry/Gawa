@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Gawa
+GenericName=Animated Image Converter
+Comment=Convert images, animations, and videos to GIF, APNG, WebP, or AVIF
+Exec=gawa %F
+Icon=gawa
+Categories=Graphics;
+Keywords=animation;image;video;converter;GIF;APNG;WebP;AVIF;
+MimeType=image/gif;image/webp;image/avif;image/apng;image/png;image/jpeg;video/3gpp;video/x-msvideo;video/x-flv;video/x-m4v;video/x-matroska;video/quicktime;video/mp4;video/mpeg;video/mp2t;video/ogg;video/webm;video/x-ms-wmv;
+StartupNotify=true
+Terminal=false

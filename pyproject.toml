@@ -1,5 +1,4 @@
-# Build metadata is only needed for installable copies (uv tool, pipx, AUR).
-# Running main.py or the compiled binary does not use this file.
+# Build metadata is for installable copies via uv tool, pipx, AUR
 [build-system]
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
@@ -15,9 +14,10 @@ authors = [
     { name = "SameerChaudry" }
 ]
 dependencies = [
-    # Only Essentials is used; the PySide6 meta-package also pulls Addons, WebEngine, and PDF
-    "PySide6-Essentials>=6.8.0",
-    "Pillow>=12.3.0",
+    # Only Essentials is used since the PySide6 mpackage also pulls Addons, WebEngine, and PDF
+    # Both floor and ceiling gets tested on each version release. Ceiling also gets bumped on each one 
+    "PySide6-Essentials>=6.11.2,<=6.12.1",
+    "Pillow>=12.3.0,<=13.0.1",
 ]
 
 [project.urls]
